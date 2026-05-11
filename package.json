@@ -1,0 +1,20 @@
+{
+  "name": "call-coaching-feedback",
+  "version": "1.0.0",
+  "description": "Automation that provides coaching to SPZ PMs and ADs by evaluating Zoom transcripts using AI.",
+  "homepage": "https://github.com/Spiralyze-1/call-coaching-feedback#readme",
+  "bugs": {
+    "url": "https://github.com/Spiralyze-1/call-coaching-feedback/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spiralyze-1/call-coaching-feedback.git"
+  },
+  "license": "ISC",
+  "author": "Siddarth Todi | Adhvaith Kul",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
