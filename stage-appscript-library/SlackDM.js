@@ -535,7 +535,7 @@ function testSlackDM() {
   var slackToken = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
   if (!slackToken) { Logger.log('❌ SLACK_BOT_TOKEN not set'); return; }
 
-  var testEmail = 'siddarth@spiralyze.com';
+  var testEmail = 'adhvaith@spiralyze.com';
   var userId    = getSlackUserIdByEmail(testEmail, slackToken);
   if (!userId)  { Logger.log('❌ Could not find Slack user for ' + testEmail); return; }
 

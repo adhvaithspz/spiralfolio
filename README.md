@@ -26,7 +26,14 @@ Whenever a Zoom recording finishes, this system pulls the transcript, asks an LL
    - 6.9 [Deploy the Apps Script Web App](#69-deploy-the-apps-script-web-app)
    - 6.10 [Wire the Zoom webhook to the Worker](#610-wire-the-zoom-webhook-to-the-worker)
    - 6.11 [Install the time-based trigger](#611-install-the-time-based-trigger)
-7. [Running it manually (for testing or backfill)](#7-running-it-manually-for-testing-or-backfill)
+7. [Running manually & testing](#7-running-manually--testing)
+   - 7.1 [Where to test: stage vs prod](#71-where-to-test-stage-vs-prod)
+   - 7.2 [Sanity / config checks (run these first)](#72-sanity--config-checks-run-these-first)
+   - 7.3 [Subsystem smoke tests](#73-subsystem-smoke-tests)
+   - 7.4 [End-to-end tests (real call → real coaching doc)](#74-end-to-end-tests-real-call--real-coaching-doc)
+   - 7.5 [Dry-run vs live-run patterns](#75-dry-run-vs-live-run-patterns)
+   - 7.6 [Reading test output](#76-reading-test-output)
+   - 7.7 [Common testing recipes](#77-common-testing-recipes)
 8. [Configuration reference](#8-configuration-reference)
 9. [Daily operations & maintenance](#9-daily-operations--maintenance)
 10. [Troubleshooting](#10-troubleshooting)
@@ -260,7 +267,7 @@ In the Apps Script editor: **Project Settings → Script Properties → Add scri
 | `CLAUDE_API_KEY`            | Anthropic key (optional)                                               |
 | `SLACK_BOT_TOKEN`           | `xoxb-…`                                                               |
 | `COACHING_DOCS_FOLDER_ID`   | ID of the Drive folder where coaching docs are saved                   |
-| `COACHING_FEEDBACK_DOC_IDS` | comma-separated Google Doc IDs used as calibration feedback for the AI |
+| `COACHING_FEEDBACK_DOC_IDS` | comma-separated Google Doc IDs used as calibration feedback for the AI (current: `17wxDtxT8fuO6IgMtIvV8c1acxP9txp6-ztOv1_DOBBk` — [open doc](https://docs.google.com/document/d/17wxDtxT8fuO6IgMtIvV8c1acxP9txp6-ztOv1_DOBBk/edit)) |
 | `SPREADSHEET_ID`            | ID of the Logs sheet (`Spiralyze Client Call Coaching - Logs`)         |
 
 > **Never** hardcode any of these in source. The codebase reads everything from `PropertiesService.getScriptProperties()`.
@@ -306,42 +313,194 @@ This trigger drains the queue of `WEBHOOK_JOB_*` ScriptProperties stored by `doP
 
 ---
 
-## 7. Running it manually (for testing or backfill)
+## 7. Running manually & testing
 
-There are three manual entry points, all in the Apps Script editor's function dropdown:
+All test entry points live in `Testing.js`, `RunCall.js`, and `ManualTranscript.js`. To run any of them: open the Apps Script editor (`clasp open` from the right folder), pick the function name from the dropdown next to the **Run** button, and click **Run**. Output streams to **View → Logs** (Apps Script's Stackdriver) and to the **Processing Log** tab of the Logs sheet (every helper calls `logToSheet`).
 
-### A) Run a specific call by meeting ID or topic fragment
+### 7.1 Where to test: stage vs prod
 
-Open `RunCall.js` and edit `RUN_CONFIG`:
+We maintain two Apps Script projects with identical source:
+
+| Env       | Folder                     | scriptId                                                                                | Use it for                            |
+| --------- | -------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| **prod**  | `appscript-library/`       | `141OcfY7tALor4vzcqWgPwWGK5Oqoyhy0YyD1_sjA-bOAoVxDnFOFO1cj`                              | Live Zoom traffic + the 5-min trigger |
+| **stage** | `appscript-library-stage/` | `11Xs8dXDu0sMnmzB4jcDIyvWdsKq2VFSVEpjpJGiih4zz__8k0a7AUoeF` ([open](https://script.google.com/d/11Xs8dXDu0sMnmzB4jcDIyvWdsKq2VFSVEpjpJGiih4zz__8k0a7AUoeF/edit)) | All testing & experiments             |
+
+Rules of thumb:
+
+- **Always test invasive code changes in stage first.** Stage has its own Script Properties — point it at a separate Logs sheet, a separate Drive folder, and (recommended) a sandbox Slack bot. That way prod data and prod attendees are never touched by a test.
+- Stage trigger is **off by default.** Test runs in stage are explicit — they only happen when you click Run.
+- Promote tested changes to prod with `npm run sync:to-prod` (see [sync script](#sync-script)). It shows a diff, asks for confirmation, then offers to `clasp push` and reminds you to redeploy.
+
+```bash
+# Sync workflow
+npm run sync:diff        # see what's different between trees
+npm run sync:to-stage    # baseline stage from prod before starting work
+npm run sync:to-prod     # promote stage -> prod when tests pass
+```
+
+### 7.2 Sanity / config checks (run these first)
+
+These never touch transcripts or Slack. They prove the environment is wired up correctly.
+
+| Function                          | What it verifies                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `testInitializeSpreadsheet()`     | Creates the Logs spreadsheet (`Processing Log` + `Transcripts` tabs), prints its URL.         |
+| `getSheetUrl()`                   | Prints the URL of the active Logs spreadsheet so you know where logs land.                    |
+| `testActiveAIProvider()`          | Logs `AI_PROVIDER`, both model names, and the `ENABLE_SLACK_POSTING` flag.                    |
+| `testCalibrationDocAccess()`      | Opens every Doc ID in `COACHING_FEEDBACK_DOC_IDS` and prints title + first 300 chars. Should NOT log `FAILED for …` — if it does, the doc is unshared or wrong-typed. |
+| `testReviewerFeedbackContext()`   | Prints the first ~2k chars of compiled reviewer feedback that the next AI run will receive.   |
+| `testOpenAIConnection()`          | Sends a built-in sample transcript through OpenAI and logs the AI's feedback. Confirms `OPENAI_API_KEY` + quota + prompt assembly are healthy. |
+
+If any of these fail, **stop and fix Script Properties before running anything else**. The expensive E2E tests below will fail in confusing ways otherwise.
+
+### 7.3 Subsystem smoke tests
+
+These call live Zoom / classification logic but do **not** generate coaching docs or DMs.
+
+| Function                                 | What it does                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `testListPMsAndADs()`                    | Fetches all Spiralyze PM/AD Zoom users via the S2S OAuth token. Proves Zoom creds + scopes.        |
+| `testFetchAllRecordings()`               | Lists recent recordings and flags which have transcripts. Proves Zoom `list_user_recordings` works. |
+| `testClientNameExtraction()`             | Runs `extractClientName()` on a hardcoded list of meeting titles. Sanity check for regex patterns. |
+| `debugParticipantDetection()`            | For each of the 15 most-recent recordings: lists participants, classifies them INTERNAL/CLIENT, prints `extractClientName` output. Best tool for diagnosing "PM/AD = unknown". |
+| `listRecentExternalClientCalls(limit)`   | Like above but only prints calls the pipeline would actually act on. Default `limit=20`.           |
+| `isRecordingAlreadyProcessed(recording)` | Pass a recording object — returns `true` if a row with the same meetingId+date or client+date already exists in `Transcripts`. |
+
+### 7.4 End-to-end tests (real call → real coaching doc)
+
+These run the **full pipeline**: download transcript → call OpenAI → write Google Doc → log to sheet → (optionally) DM Slack.
+
+#### A) Run a specific call by meeting ID or topic fragment — `runCallByMeetingId()`
+
+Open `RunCall.js` and edit `RUN_CONFIG`, then run `runCallByMeetingId()`:
 
 ```js
 var RUN_CONFIG = {
-  meetingId: '81072862648', // numeric ID OR a substring of the topic
-  clientNameOverride: null,
-  pmNameOverride: null,
-  adNameOverride: null,
-  ignorePreviousContext: false,
-  forceExternal: false,
-  callTypeOverride: null, // 'client_weekly' | 'design_review' | 'sales_call' | 'interview' | 'internal'
-  skipDuplicateCheck: true,
+  meetingId: '81072862648', // numeric ID OR a substring of the topic (case-insensitive)
+  clientNameOverride: null, // force a client name
+  pmNameOverride: null,     // force a PM display name
+  adNameOverride: null,     // force an AD display name
+  ignorePreviousContext: false, // true = skip historical context bundle
+  forceExternal: false,         // true = bypass internal/external classifier
+  callTypeOverride: null,       // 'client_weekly' | 'design_review' | 'sales_call' | 'interview' | 'internal'
+  skipDuplicateCheck: true,     // true = re-process even if already in Transcripts
 };
 ```
 
-Run `runCallByMeetingId()`. Logs stream to `View → Logs` and to the `Processing Log` sheet.
+This is the **primary** test entry point — it gives you full control over a single run and is the only path that respects the overrides above.
 
-### B) Process the next unprocessed external client call
+#### B) Process the next unprocessed external client call — `testProcessNextExternalClientRecording()`
 
-Run `testProcessNextExternalClientRecording()` from `Testing.js`. Useful for smoke-testing.
+Walks the recent-recordings list, filters to external client calls without a row in `Transcripts`, sorts newest-first, and runs the pipeline on the first one that succeeds. Use this as a one-click "did anything regress?" check after a deploy.
 
-### C) Process a manually-pasted transcript (no Zoom recording)
+#### C) Process the most recent recording (no filters) — `testProcessMostRecentRecording()`
 
-Used for cases like the 32Auctions workaround. Paste the transcript into a Google Doc, then call `processManualTranscript()` from `ManualTranscript.js` with that doc's ID.
+Picks recordings[0] unconditionally and runs `processClientCall(id, topic)` on it. Cruder than (B) but useful if (B) reports "no candidates".
 
-Other handy debug helpers in `Testing.js`:
+#### D) Process a manually-pasted transcript — `processManualTranscript({...})`
 
-- `listRecentExternalClientCalls()` — print recent recordings the system would have processed.
-- `debugParticipantDetection()` — verify a specific call's PM/AD resolution.
-- `isRecordingAlreadyProcessed(meetingId)` — has this been done before?
+For non-Zoom transcripts (Otter, MS Teams export, the 32Auctions workaround, etc.). Paste the transcript into a Google Doc, then call:
+
+```js
+processManualTranscript({
+  meetingTopic: '32Auctions <> Spiralyze - Weekly CRO',
+  hostEmail: 'arbab@spiralyze.com',
+  meetingDate: '2026-04-29T22:30:00',
+  transcriptText: readTranscriptTextFromDrive('1wqTbTq63-CZJDItp3CZ54ITEtvCK6BtvGBh67Fptvh0'),
+  ignorePreviousContext: true,
+});
+```
+
+Pre-baked example: `testProcess32AuctionsTranscriptFromGoogleDoc()`. To preview parsing without running the AI: `testParse32AuctionsTranscriptFromGoogleDoc()`.
+
+#### E) Pinned regression cases
+
+`Testing.js` has named regression entry points kept around because they cover edge cases:
+
+- `testProcessCandelaWeeklyMeeting()` — exercises `forceExternal` + `clientNameOverride` against a known meeting ID.
+- `processSpecificRecordingWithoutPreviousContext(meetingId, meetingUuid, topic, hostEmail)` — runs E2E with **no** historical context and Slack disabled (good for evaluating prompt changes in isolation).
+
+### 7.5 Dry-run vs live-run patterns
+
+Combine these flags to control blast radius:
+
+| Goal                                                  | How                                                                                     |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Generate a coaching doc but **don't** DM anyone       | Set `CONFIG.ENABLE_SLACK_POSTING = false` in `Config.js` (or set the same on stage env). |
+| Re-process a call that's already in `Transcripts`     | `RUN_CONFIG.skipDuplicateCheck = true`.                                                  |
+| Isolate prompt changes from historical context        | `RUN_CONFIG.ignorePreviousContext = true`.                                               |
+| Test on an internal-looking title (e.g. "team sync")  | `RUN_CONFIG.forceExternal = true`.                                                       |
+| Test a specific template (`design_review` etc.)       | `RUN_CONFIG.callTypeOverride = 'design_review'`.                                         |
+| Run against prod data without touching prod resources | Use the stage env (separate Drive folder + Logs sheet + Slack bot).                      |
+
+> **Safety:** `ENABLE_SLACK_POSTING` is the master switch. Flip it to `false` in stage's `Config.js` and commit it — that way no one accidentally DMs prod attendees from stage. Flip via Script Properties is not supported; it's a code constant.
+
+### 7.6 Reading test output
+
+- **Apps Script editor** → bottom panel `Execution log` shows `Logger.log(...)` lines from the most recent run.
+- **Apps Script editor** → left sidebar `Executions` shows every invocation, status, duration, and the user who ran it. Click a row → see its full log.
+- **Logs sheet → `Processing Log` tab** — every helper writes here via `logToSheet`. Rows are color-coded by status:
+  - 🟢 `SUCCESS` — pipeline completed
+  - 🔴 `ERROR` / `TEST FAILED` — something threw; the error column has the stack
+  - 🟡 `WARNING` — recoverable issue (e.g. participant resolved but client unknown)
+  - ⚫ `SKIPPED` — duplicate or non-external
+  - 🔵 `STARTED` / `INFO` — progress checkpoints
+  - 🟣 `TEST` / `TEST COMPLETE` — `testFoo()` book-end rows
+- **Logs sheet → `Transcripts` tab** — one row per successfully processed call, with link to the coaching doc. This is what `isRecordingAlreadyProcessed()` reads.
+- **Coaching docs** — every successful run ends in a Google Doc in `COACHING_DOCS_FOLDER_ID`. The last block is `SUMMARY FOR FUTURE CONTEXT`; that's what the next run on the same client will pick up.
+
+### 7.7 Common testing recipes
+
+**Smoke test after a code deploy (stage):**
+
+```text
+1. cd appscript-library-stage && clasp push
+2. testActiveAIProvider()              → confirms wiring
+3. testCalibrationDocAccess()          → confirms calibration doc still readable
+4. testProcessNextExternalClientRecording()  → real E2E on prod-like data
+5. Eyeball the resulting coaching doc + Processing Log row
+```
+
+**Replay a specific historical call (e.g. customer asked us to re-run a doc):**
+
+```text
+1. RUN_CONFIG.meetingId = '<that meeting id>'
+2. RUN_CONFIG.skipDuplicateCheck = true
+3. RUN_CONFIG.ignorePreviousContext = true   // optional: ignore prior coaching docs
+4. runCallByMeetingId()
+```
+
+**Diagnose "Doc says PM/AD = unknown":**
+
+```text
+1. debugParticipantDetection()         → inspect the offending recording
+2. If participant name is right but role lookup is wrong:
+     - Add the email to PM_EMAILS / AD_EMAILS in Config.js
+     - Or add an entry in CLIENT_TEAM_MAP in ParticipantDetection.js
+3. Re-run via runCallByMeetingId() with skipDuplicateCheck=true
+```
+
+**Iterate on a prompt change without spending OpenAI quota on full transcripts:**
+
+```text
+1. Edit prompt in ClaudeAPI.js / OpenAIAPI.js
+2. testOpenAIConnection()              → uses the built-in sample transcript
+3. Inspect the logged feedback
+4. Once happy, run testProcessNextExternalClientRecording() once for a real-data check
+```
+
+**Validate the manual-transcript path (no Zoom recording available):**
+
+```text
+1. Paste transcript text into a fresh Google Doc, copy its ID
+2. testParse32AuctionsTranscriptFromGoogleDoc()  // first, just preview parsing
+3. processManualTranscript({ meetingTopic, hostEmail, meetingDate, transcriptText, ignorePreviousContext: true })
+```
+
+<a id="sync-script"></a>
+
+> See `scripts/sync-stage.sh` for promoting code between the two environments. The script is wrapped by `npm run sync:diff | sync:to-stage | sync:to-prod` and always previews the diff + asks for confirmation before writing anything.
 
 ---
 
@@ -377,7 +536,7 @@ PM/AD rosters live as `PM_EMAILS` and `AD_EMAILS` in the same file. Add or remov
 
 - **Where to look first**: the `Processing Log` tab in the Logs Sheet. Color-coded rows (green = success, red = error, yellow = warning, grey = skipped, blue = started).
 - **Coaching docs**: in the `COACHING_DOCS_FOLDER_ID` Drive folder. Each doc ends with a `SUMMARY FOR FUTURE CONTEXT` block — keep the last few; that's what feeds the next run's context.
-- **Calibration**: drop reviewer feedback as comments inside any coaching doc whose ID is listed in `COACHING_FEEDBACK_DOC_IDS`. The next run will read the latest reviewer feedback and adjust prompts accordingly (`extractFutureContextSummaryFromFeedback`).
+- **Calibration**: drop reviewer feedback as comments inside any coaching doc whose ID is listed in `COACHING_FEEDBACK_DOC_IDS`. The next run will read the latest reviewer feedback and adjust prompts accordingly (`extractFutureContextSummaryFromFeedback`). The live calibration doc is [`Call Coaching - Calibration Feedback`](https://docs.google.com/document/d/17wxDtxT8fuO6IgMtIvV8c1acxP9txp6-ztOv1_DOBBk/edit) (ID `17wxDtxT8fuO6IgMtIvV8c1acxP9txp6-ztOv1_DOBBk`).
 - **Adding a new PM / AD**: add their email to `PM_EMAILS` or `AD_EMAILS` in `Config.js`, add them to the workspace bot's reachable users in Slack, and add an entry in `SPIRALYZE_SLACK_HANDLES`. `clasp push` and redeploy.
 - **Re-deploying after code changes**: always **Deploy → Manage → Edit → New version → Deploy**.
 

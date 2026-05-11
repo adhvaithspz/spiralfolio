@@ -11,7 +11,7 @@ const AD_EMAILS = [
   'daria@spiralyze.com',
   'abdelrahman@spiralyze.com',
   'thomas@spiralyze.com',
-  'harry@spiralyze.com'
+  'harry@spiralyze.com',
 ];
 
 /**
@@ -34,7 +34,7 @@ const PM_EMAILS = [
   'tatiana@spiralyze.com',
   'beth@spiralyze.com',
   'sebastian@spiralyze.com',
-  'rebekah@spiralyze.com'
+  'rebekah@spiralyze.com',
 ];
 
 /**
@@ -53,7 +53,7 @@ const CONFIG = {
   MAX_PREVIOUS_CALLS: 3,
   MAX_REVIEWER_FEEDBACK_CHARS_PER_DOC: 6000,
   MAX_REVIEWER_FEEDBACK_TOTAL_CHARS: 12000,
-  ENABLE_SLACK_POSTING: true,
+  ENABLE_SLACK_POSTING: false,
   SLACK_MESSAGE_CHAR_LIMIT: 3000,
 
   // Google Sheets
@@ -65,8 +65,8 @@ const CONFIG = {
   CLIENT_PATTERNS: [
     /Client[:\s-]+(.+?)(?:\s*[-|]|\s*$)/i,
     /^(.+?)\s*[-|]\s*(Kickoff|Meeting|Call|Project|Demo)/i,
-    /\[(.+?)\]/
-  ]
+    /\[(.+?)\]/,
+  ],
 };
 
 /**
@@ -124,24 +124,25 @@ function getOutputSheet() {
       sheet = ss.insertSheet(CONFIG.OUTPUT_SHEET_NAME);
     }
 
-    sheet.getRange(1, 1, 1, 10).setValues([[
-      'Timestamp',
-      'Meeting Topic',
-      'Client Name',
-      'Host Email',
-      'Host Name',
-      'Role (PM/AD)',
-      'Status',
-      'Transcript Length',
-      'Feedback Generated',
-      'Error Message'
-    ]]);
+    sheet
+      .getRange(1, 1, 1, 10)
+      .setValues([
+        [
+          'Timestamp',
+          'Meeting Topic',
+          'Client Name',
+          'Host Email',
+          'Host Name',
+          'Role (PM/AD)',
+          'Status',
+          'Transcript Length',
+          'Feedback Generated',
+          'Error Message',
+        ],
+      ]);
 
     const headerRange = sheet.getRange(1, 1, 1, 10);
-    headerRange.setFontWeight('bold')
-      .setBackground('#4285f4')
-      .setFontColor('#ffffff')
-      .setHorizontalAlignment('center');
+    headerRange.setFontWeight('bold').setBackground('#4285f4').setFontColor('#ffffff').setHorizontalAlignment('center');
 
     sheet.setColumnWidth(1, 150);
     sheet.setColumnWidth(2, 250);
@@ -170,24 +171,23 @@ function getTranscriptSheet() {
   if (!sheet) {
     sheet = ss.insertSheet(CONFIG.TRANSCRIPT_SHEET_NAME);
 
-    sheet.getRange(1, 1, 1, 10).setValues([[
-  'Timestamp',            // col 1
-  'Client Name',          // col 2
-  'Meeting ID',           // col 3
-  'PM Name',              // col 4
-  'AD Name',              // col 5
-  'Summary',              // col 6
-  'Meeting Type',         // col 7
-  'External Participants',// col 8
-  'Coaching Doc',         // col 9
-  'AI Provider'           // col 10
-]]);
+    sheet.getRange(1, 1, 1, 10).setValues([
+      [
+        'Timestamp', // col 1
+        'Client Name', // col 2
+        'Meeting ID', // col 3
+        'PM Name', // col 4
+        'AD Name', // col 5
+        'Summary', // col 6
+        'Meeting Type', // col 7
+        'External Participants', // col 8
+        'Coaching Doc', // col 9
+        'AI Provider', // col 10
+      ],
+    ]);
 
     const headerRange = sheet.getRange(1, 1, 1, 10);
-    headerRange.setFontWeight('bold')
-      .setBackground('#34a853')
-      .setFontColor('#ffffff')
-      .setHorizontalAlignment('center');
+    headerRange.setFontWeight('bold').setBackground('#34a853').setFontColor('#ffffff').setHorizontalAlignment('center');
 
     sheet.setColumnWidth(1, 150);
     sheet.setColumnWidth(2, 180);
@@ -220,16 +220,16 @@ function logToSheet(data) {
 
     // 10 values — matches getOutputSheet() header exactly
     const row = [
-      new Date(),                                        // col 1  Timestamp
-      data.meetingTopic        || '',                    // col 2  Meeting Topic
-      data.clientName          || '',                    // col 3  Client Name
-      data.hostEmail           || '',                    // col 4  Host Email
-      data.hostName            || '',                    // col 5  Host Name
-      data.role                || '',                    // col 6  Role (PM/AD)
-      data.status              || '',                    // col 7  Status
-      data.transcriptLength    || 0,                     // col 8  Transcript Length
-      data.feedbackGenerated   ? 'Yes' : 'No',           // col 9  Feedback Generated
-      data.error               || ''                     // col 10 Error Message
+      new Date(), // col 1  Timestamp
+      data.meetingTopic || '', // col 2  Meeting Topic
+      data.clientName || '', // col 3  Client Name
+      data.hostEmail || '', // col 4  Host Email
+      data.hostName || '', // col 5  Host Name
+      data.role || '', // col 6  Role (PM/AD)
+      data.status || '', // col 7  Status
+      data.transcriptLength || 0, // col 8  Transcript Length
+      data.feedbackGenerated ? 'Yes' : 'No', // col 9  Feedback Generated
+      data.error || '', // col 10 Error Message
     ];
 
     sheet.appendRow(row);
@@ -245,23 +245,27 @@ function logToSheet(data) {
       switch (data.status) {
         case 'SUCCESS':
         case 'TEST COMPLETE':
-          rowRange.setBackground('#d9ead3'); break;
+          rowRange.setBackground('#d9ead3');
+          break;
         case 'ERROR':
         case 'FAILED':
         case 'TEST FAILED':
-          rowRange.setBackground('#f4cccc'); break;
+          rowRange.setBackground('#f4cccc');
+          break;
         case 'WARNING':
-          rowRange.setBackground('#fff2cc'); break;
+          rowRange.setBackground('#fff2cc');
+          break;
         case 'SKIPPED':
-          rowRange.setBackground('#efefef'); break;
+          rowRange.setBackground('#efefef');
+          break;
         case 'STARTED':
-          rowRange.setBackground('#cfe2f3'); break;
+          rowRange.setBackground('#cfe2f3');
+          break;
         default:
           // INFO, TEST, etc — no background
           break;
       }
     }
-
   } catch (error) {
     Logger.log('logToSheet error: ' + error);
   }
@@ -294,7 +298,7 @@ function initializeSheets() {
   logToSheet({
     status: 'INFO',
     meetingTopic: 'System Initialized',
-    error: 'Spiralyze Client Call Coaching system ready'
+    error: 'Spiralyze Client Call Coaching system ready',
   });
 
   return url;
