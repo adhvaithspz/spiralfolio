@@ -8,10 +8,12 @@ import { TranscriptUploader } from '@/components/calls/TranscriptUploader';
 export const dynamic = 'force-dynamic';
 
 export default async function CallsPage({ params }: { params: { id: string } }) {
-  const client = getClient(params.id);
+  const [client, brain, callRows] = await Promise.all([
+    getClient(params.id),
+    getClientBrain(params.id),
+    listCalls(params.id),
+  ]);
   if (!client) notFound();
-  const brain = getClientBrain(params.id);
-  const callRows = listCalls(params.id);
 
   return (
     <div className="space-y-6">

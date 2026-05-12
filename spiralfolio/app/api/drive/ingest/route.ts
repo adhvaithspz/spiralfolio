@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'could not parse folder id from url' }, { status: 400 });
   }
 
-  const client = getClient(clientId);
+  const client = await getClient(clientId);
   if (!client) return NextResponse.json({ error: 'client not found' }, { status: 404 });
 
   const files = await listFolderFiles(folderId);
@@ -53,26 +53,21 @@ export async function POST(req: Request) {
     });
     flagsFound += extraction.flags.length;
     const docId = nanoid();
-    db.insert(documents)
-      .values({
-        id: docId,
-        clientId,
-        name: file.name,
-        driveFileId: file.id,
-        docType: extraction.type,
-        keyFacts: safeStringify(extraction.key_facts),
-        flags: safeStringify(extraction.flags),
-        ingestedAt: new Date(),
-      })
-      .run();
+    await db.insert(documents).values({
+      id: docId,
+      clientId,
+      name: file.name,
+      driveFileId: file.id,
+      docType: extraction.type,
+      keyFacts: safeStringify(extraction.key_facts),
+      flags: safeStringify(extraction.flags),
+      ingestedAt: new Date(),
+    });
     ingested++;
     docs.push({ id: docId, name: file.name, type: extraction.type, flags: extraction.flags.length });
   }
 
-  db.update(clients)
-    .set({ driveFolderUrl: folderUrl, updatedAt: new Date() })
-    .where(eq(clients.id, clientId))
-    .run();
+  await db.update(clients).set({ driveFolderUrl: folderUrl, updatedAt: new Date() }).where(eq(clients.id, clientId));
 
   return NextResponse.json({ ingested, flags_found: flagsFound, docs });
 }

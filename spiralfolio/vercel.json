@@ -1,0 +1,9 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "functions": {
+    "app/api/calls/process/route.ts": { "maxDuration": 300 },
+    "app/api/drive/ingest/route.ts":  { "maxDuration": 300 }
+  }
+}

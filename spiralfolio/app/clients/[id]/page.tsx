@@ -25,10 +25,12 @@ import { TranscriptUploader } from '@/components/calls/TranscriptUploader';
 export const dynamic = 'force-dynamic';
 
 export default async function ClientPage({ params }: { params: { id: string } }) {
-  const client = getClient(params.id);
+  const [client, brain] = await Promise.all([
+    getClient(params.id),
+    getClientBrain(params.id),
+  ]);
   if (!client) notFound();
 
-  const brain = getClientBrain(params.id);
   const stats = computeBrainStats(brain);
 
   return (

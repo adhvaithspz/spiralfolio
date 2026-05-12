@@ -29,22 +29,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'client_id and transcript_text are required' }, { status: 400 });
   }
 
-  const client = getClient(clientId);
+  const client = await getClient(clientId);
   if (!client) return NextResponse.json({ error: 'client not found' }, { status: 404 });
 
   const callId = nanoid();
   const now = new Date();
-  db.insert(calls)
-    .values({
-      id: callId,
-      clientId,
-      callDate,
-      callType,
-      rawTranscript: transcript,
-      status: 'processing',
-      createdAt: now,
-    })
-    .run();
+  await db.insert(calls).values({
+    id: callId,
+    clientId,
+    callDate,
+    callType,
+    rawTranscript: transcript,
+    status: 'processing',
+    createdAt: now,
+  });
 
   try {
     const synthesis = await synthesizeCall({
@@ -55,7 +53,7 @@ export async function POST(req: Request) {
       transcript,
     });
 
-    const changes = applyCallSynthesis({ clientId, synthesis, at: now });
+    const changes = await applyCallSynthesis({ clientId, synthesis, at: now });
 
     let coachingDoc = '';
     try {
@@ -64,20 +62,17 @@ export async function POST(req: Request) {
       coachingDoc = '';
     }
 
-    const updatedBrain = getClientBrain(clientId);
+    const updatedBrain = await getClientBrain(clientId);
 
-    db.update(calls)
-      .set({
-        status: 'done',
-        callSummary: synthesis.call_summary,
-        keyUpdates: safeStringify(synthesis.key_updates),
-        attendeesClient: safeStringify(synthesis.attendees_client),
-        attendeesInternal: safeStringify(synthesis.attendees_internal),
-        brainSnapshot: safeStringify(updatedBrain),
-        coachingDoc,
-      })
-      .where(eq(calls.id, callId))
-      .run();
+    await db.update(calls).set({
+      status: 'done',
+      callSummary: synthesis.call_summary,
+      keyUpdates: safeStringify(synthesis.key_updates),
+      attendeesClient: safeStringify(synthesis.attendees_client),
+      attendeesInternal: safeStringify(synthesis.attendees_internal),
+      brainSnapshot: safeStringify(updatedBrain),
+      coachingDoc,
+    }).where(eq(calls.id, callId));
 
     const integrations: Record<string, unknown> = {};
     if (client.slackChannelId) {
@@ -120,7 +115,7 @@ export async function POST(req: Request) {
       integrations,
     });
   } catch (err) {
-    db.update(calls).set({ status: 'error' }).where(eq(calls.id, callId)).run();
+    await db.update(calls).set({ status: 'error' }).where(eq(calls.id, callId));
     return NextResponse.json({ error: (err as Error).message, call_id: callId }, { status: 500 });
   }
 }

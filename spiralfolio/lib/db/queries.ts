@@ -33,58 +33,58 @@ import { safeParse } from '@/lib/utils/json';
 
 // ─── Single-table reads ──────────────────────────────────────────────────────
 
-export function getClient(id: string): Client | undefined {
-  return db.select().from(clients).where(eq(clients.id, id)).get();
+export async function getClient(id: string): Promise<Client | undefined> {
+  const [row] = await db.select().from(clients).where(eq(clients.id, id)).limit(1);
+  return row;
 }
 
-export function listClients(): Client[] {
-  return db.select().from(clients).orderBy(desc(clients.updatedAt)).all();
+export async function listClients(): Promise<Client[]> {
+  return db.select().from(clients).orderBy(desc(clients.updatedAt));
 }
 
-export function listGoals(clientId: string) {
-  return db.select().from(goals).where(eq(goals.clientId, clientId)).orderBy(asc(goals.position)).all();
+export async function listGoals(clientId: string) {
+  return db.select().from(goals).where(eq(goals.clientId, clientId)).orderBy(asc(goals.position));
 }
 
-export function listContacts(clientId: string): Contact[] {
-  return db.select().from(contacts).where(eq(contacts.clientId, clientId)).orderBy(asc(contacts.createdAt)).all();
+export async function listContacts(clientId: string): Promise<Contact[]> {
+  return db.select().from(contacts).where(eq(contacts.clientId, clientId)).orderBy(asc(contacts.createdAt));
 }
 
-export function listConcerns(clientId: string): Concern[] {
-  return db.select().from(concerns).where(eq(concerns.clientId, clientId)).orderBy(asc(concerns.createdAt)).all();
+export async function listConcerns(clientId: string): Promise<Concern[]> {
+  return db.select().from(concerns).where(eq(concerns.clientId, clientId)).orderBy(asc(concerns.createdAt));
 }
 
-export function listDeliverables(clientId: string): Deliverable[] {
+export async function listDeliverables(clientId: string): Promise<Deliverable[]> {
   return db
     .select()
     .from(deliverables)
     .where(eq(deliverables.clientId, clientId))
-    .orderBy(asc(deliverables.createdAt))
-    .all();
+    .orderBy(asc(deliverables.createdAt));
 }
 
-export function listDecisions(clientId: string) {
-  return db.select().from(decisions).where(eq(decisions.clientId, clientId)).orderBy(desc(decisions.decidedAt)).all();
+export async function listDecisions(clientId: string) {
+  return db.select().from(decisions).where(eq(decisions.clientId, clientId)).orderBy(desc(decisions.decidedAt));
 }
 
-export function listWins(clientId: string) {
-  return db.select().from(wins).where(eq(wins.clientId, clientId)).orderBy(desc(wins.wonAt)).all();
+export async function listWins(clientId: string) {
+  return db.select().from(wins).where(eq(wins.clientId, clientId)).orderBy(desc(wins.wonAt));
 }
 
-export function getIcpProfile(clientId: string) {
-  return db.select().from(icpProfile).where(eq(icpProfile.clientId, clientId)).get();
+export async function getIcpProfile(clientId: string) {
+  const [row] = await db.select().from(icpProfile).where(eq(icpProfile.clientId, clientId)).limit(1);
+  return row;
 }
 
-export function listDocuments(clientId: string): Document[] {
+export async function listDocuments(clientId: string): Promise<Document[]> {
   return db
     .select()
     .from(documents)
     .where(eq(documents.clientId, clientId))
-    .orderBy(desc(documents.ingestedAt))
-    .all();
+    .orderBy(desc(documents.ingestedAt));
 }
 
-export function listCalls(clientId: string): Call[] {
-  return db.select().from(calls).where(eq(calls.clientId, clientId)).orderBy(desc(calls.callDate)).all();
+export async function listCalls(clientId: string): Promise<Call[]> {
+  return db.select().from(calls).where(eq(calls.clientId, clientId)).orderBy(desc(calls.callDate));
 }
 
 // ─── Mappers row → brain shape ───────────────────────────────────────────────
@@ -138,7 +138,7 @@ function toBrainCallEntry(c: Call): BrainCallLogEntry {
   };
 }
 
-function toBrainIcp(row: ReturnType<typeof getIcpProfile>): BrainICP {
+function toBrainIcp(row: Awaited<ReturnType<typeof getIcpProfile>>): BrainICP {
   if (!row) return {};
   return {
     primary: row.primarySegment ?? undefined,
@@ -152,16 +152,34 @@ function toBrainIcp(row: ReturnType<typeof getIcpProfile>): BrainICP {
   };
 }
 
-// ─── Aggregate read: assemble the full ClientBrain from joined tables ───────
+// ─── Aggregate read: assemble the full ClientBrain from joined tables ────────
 
-export function getClientBrain(clientId: string): ClientBrain {
-  const c = getClient(clientId);
+export async function getClientBrain(clientId: string): Promise<ClientBrain> {
+  const c = await getClient(clientId);
   if (!c) return EMPTY_BRAIN;
 
-  const allConcerns = listConcerns(clientId);
-  const allDeliverables = listDeliverables(clientId);
-  const allContacts = listContacts(clientId);
-  const callRows = listCalls(clientId);
+  // Fetch all child tables in parallel
+  const [
+    goalRows,
+    allContacts,
+    allConcerns,
+    allDeliverables,
+    decisionRows,
+    winRows,
+    icpRow,
+    docRows,
+    callRows,
+  ] = await Promise.all([
+    listGoals(clientId),
+    listContacts(clientId),
+    listConcerns(clientId),
+    listDeliverables(clientId),
+    listDecisions(clientId),
+    listWins(clientId),
+    getIcpProfile(clientId),
+    listDocuments(clientId),
+    listCalls(clientId),
+  ]);
 
   const lastCallRow = callRows[0];
   const lastUpdated = c.updatedAt ?? c.createdAt ?? null;
@@ -173,7 +191,7 @@ export function getClientBrain(clientId: string): ClientBrain {
     status: c.status ?? 'on-track',
     last_updated: lastUpdated ? new Date(lastUpdated).toISOString().slice(0, 10) : undefined,
     last_call: lastCallRow?.callDate,
-    client_goals: listGoals(clientId).map(g => g.text),
+    client_goals: goalRows.map(g => g.text),
     success_metric: c.successMetric ?? undefined,
     client_contacts: allContacts.filter(c => c.side === 'client').map(toBrainContact),
     internal_team: allContacts.filter(c => c.side === 'internal').map(toBrainContact),
@@ -181,15 +199,15 @@ export function getClientBrain(clientId: string): ClientBrain {
     resolved_concerns: allConcerns.filter(x => x.status === 'resolved').map(toBrainConcern),
     our_deliverables: allDeliverables.filter(d => d.side === 'us').map(toBrainDeliverable),
     client_deliverables: allDeliverables.filter(d => d.side === 'client').map(toBrainDeliverable),
-    decisions_made: listDecisions(clientId).map(d => d.text),
-    wins: listWins(clientId).map(w => w.text),
-    icp_notes: toBrainIcp(getIcpProfile(clientId)),
-    documents: listDocuments(clientId).map(toBrainDocument),
+    decisions_made: decisionRows.map(d => d.text),
+    wins: winRows.map(w => w.text),
+    icp_notes: toBrainIcp(icpRow),
+    documents: docRows.map(toBrainDocument),
     call_log: callRows.map(toBrainCallEntry),
   };
 }
 
-// ─── Quick stats (per-client and portfolio) ─────────────────────────────────
+// ─── Quick stats ─────────────────────────────────────────────────────────────
 
 export type ClientStats = {
   goals: number;
@@ -203,37 +221,38 @@ export type ClientStats = {
 
 const isPending = (s: string | null | undefined) => (s ?? 'pending').toLowerCase() !== 'done';
 
-export function getClientStats(clientId: string): ClientStats {
-  const callRows = listCalls(clientId);
-  const allDeliverables = listDeliverables(clientId);
+export async function getClientStats(clientId: string): Promise<ClientStats> {
+  const [goalRows, concernRows, delivRows, callRows, winRows] = await Promise.all([
+    listGoals(clientId),
+    listConcerns(clientId),
+    listDeliverables(clientId),
+    listCalls(clientId),
+    listWins(clientId),
+  ]);
   return {
-    goals: db.select().from(goals).where(eq(goals.clientId, clientId)).all().length,
-    openConcerns: db.select().from(concerns).where(eq(concerns.clientId, clientId)).all()
-      .filter(c => c.status !== 'resolved').length,
-    ourPending: allDeliverables.filter(d => d.side === 'us' && isPending(d.status)).length,
-    theirPending: allDeliverables.filter(d => d.side === 'client' && isPending(d.status)).length,
+    goals: goalRows.length,
+    openConcerns: concernRows.filter(c => c.status !== 'resolved').length,
+    ourPending: delivRows.filter(d => d.side === 'us' && isPending(d.status)).length,
+    theirPending: delivRows.filter(d => d.side === 'client' && isPending(d.status)).length,
     callCount: callRows.length,
     lastCallDate: callRows[0]?.callDate ?? null,
-    wins: db.select().from(wins).where(eq(wins.clientId, clientId)).all().length,
+    wins: winRows.length,
   };
 }
 
 /** Recent calls across all clients (for dashboard activity feed). */
-export function listRecentCalls(limit = 5) {
-  return db.select().from(calls).orderBy(desc(calls.callDate)).limit(limit).all();
+export async function listRecentCalls(limit = 5): Promise<Call[]> {
+  return db.select().from(calls).orderBy(desc(calls.callDate)).limit(limit);
 }
 
 /** Concerns flagged as a blocker for something (used by NeedsAttention). */
-export function listBlockingConcerns(clientId: string) {
-  return db
-    .select()
-    .from(concerns)
-    .where(eq(concerns.clientId, clientId))
-    .all()
-    .filter(c => c.status !== 'resolved' && !!c.blockerFor);
+export async function listBlockingConcerns(clientId: string) {
+  const all = await listConcerns(clientId);
+  return all.filter(c => c.status !== 'resolved' && !!c.blockerFor);
 }
 
 /** Used by API route that lists calls but must strip coaching for stakeholders. */
-export function listCallsSafe(clientId: string): Call[] {
-  return listCalls(clientId).map(c => ({ ...c, coachingDoc: null }));
+export async function listCallsSafe(clientId: string): Promise<Call[]> {
+  const rows = await listCalls(clientId);
+  return rows.map(c => ({ ...c, coachingDoc: null }));
 }

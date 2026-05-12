@@ -9,12 +9,14 @@ import type { Client } from '@/lib/db/schema';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const clients = listClients();
+  const clients = await listClients();
 
-  const items: { client: Client; stats: BrainStats }[] = clients.map(client => {
-    const brain = getClientBrain(client.id);
-    return { client, stats: computeBrainStats(brain) };
-  });
+  const items: { client: Client; stats: BrainStats }[] = await Promise.all(
+    clients.map(async client => {
+      const brain = await getClientBrain(client.id);
+      return { client, stats: computeBrainStats(brain) };
+    })
+  );
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',

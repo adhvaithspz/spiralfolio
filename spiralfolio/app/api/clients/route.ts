@@ -7,7 +7,7 @@ import { nanoid } from '@/lib/utils/nanoid';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json({ clients: listClients() });
+  return NextResponse.json({ clients: await listClients() });
 }
 
 export async function POST(req: Request) {
@@ -32,20 +32,18 @@ export async function POST(req: Request) {
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(clients).values(row).run();
+  await db.insert(clients).values(row);
 
   // Create empty ICP profile so the per-client ICP page has a row to update later.
-  db.insert(icpProfile)
-    .values({
-      clientId: row.id,
-      primarySegment: null,
-      secondarySegment: null,
-      motivators: '[]',
-      objections: '[]',
-      demographicSignals: '[]',
-      updatedAt: now,
-    })
-    .run();
+  await db.insert(icpProfile).values({
+    clientId: row.id,
+    primarySegment: null,
+    secondarySegment: null,
+    motivators: '[]',
+    objections: '[]',
+    demographicSignals: '[]',
+    updatedAt: now,
+  });
 
   return NextResponse.json({ client: row }, { status: 201 });
 }

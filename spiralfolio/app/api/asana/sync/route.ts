@@ -6,9 +6,13 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const clientId = String(body.client_id ?? body.clientId ?? body.project_id ?? body.projectId ?? '');
   if (!clientId) return NextResponse.json({ error: 'client_id is required' }, { status: 400 });
-  const client = getClient(clientId);
+
+  const [client, brain] = await Promise.all([
+    getClient(clientId),
+    getClientBrain(clientId),
+  ]);
   if (!client) return NextResponse.json({ error: 'client not found' }, { status: 404 });
-  const brain = getClientBrain(clientId);
+
   const result = await syncDeliverablesToAsana({
     asanaProjectId: client.asanaProjectId,
     projectName: client.engagement ?? client.name,

@@ -7,9 +7,11 @@ import { DocumentsPanel } from '@/components/client/DocumentsPanel';
 export const dynamic = 'force-dynamic';
 
 export default async function DocumentsPage({ params }: { params: { id: string } }) {
-  const client = getClient(params.id);
+  const [client, brain] = await Promise.all([
+    getClient(params.id),
+    getClientBrain(params.id),
+  ]);
   if (!client) notFound();
-  const brain = getClientBrain(params.id);
 
   return (
     <div className="space-y-6">

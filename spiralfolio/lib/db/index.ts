@@ -1,21 +1,18 @@
 import 'server-only';
-import path from 'node:path';
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from './schema';
 
-const dbPath = process.env.DATABASE_URL ?? path.join(process.cwd(), 'spiralfolio.db');
+/**
+ * Database connection.
+ *
+ * Dev  : TURSO_DATABASE_URL=file:./spiralfolio.db  (local SQLite file, no auth)
+ * Prod : TURSO_DATABASE_URL=libsql://…  +  TURSO_AUTH_TOKEN=…  (Turso cloud)
+ */
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL ?? 'file:./spiralfolio.db',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __sqlite: Database.Database | undefined;
-}
-
-const sqlite = global.__sqlite ?? new Database(dbPath);
-if (process.env.NODE_ENV !== 'production') global.__sqlite = sqlite;
-
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(client, { schema });
 export { schema };

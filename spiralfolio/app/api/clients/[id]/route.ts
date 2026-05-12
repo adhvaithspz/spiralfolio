@@ -7,13 +7,13 @@ import { getClient, getClientBrain, listCallsSafe } from '@/lib/db/queries';
 export const dynamic = 'force-dynamic';
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
-  const client = getClient(params.id);
+  const [client, brain, calls] = await Promise.all([
+    getClient(params.id),
+    getClientBrain(params.id),
+    listCallsSafe(params.id),
+  ]);
   if (!client) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  return NextResponse.json({
-    client,
-    brain: getClientBrain(params.id),
-    calls: listCallsSafe(params.id),
-  });
+  return NextResponse.json({ client, brain, calls });
 }
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
@@ -33,12 +33,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (key in body) allowed[key] = body[key];
   }
   allowed.updatedAt = new Date();
-  db.update(clients).set(allowed).where(eq(clients.id, params.id)).run();
-  return NextResponse.json({ client: getClient(params.id) });
+  await db.update(clients).set(allowed).where(eq(clients.id, params.id));
+  return NextResponse.json({ client: await getClient(params.id) });
 }
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   // ON DELETE CASCADE handles all child rows.
-  db.delete(clients).where(eq(clients.id, params.id)).run();
+  await db.delete(clients).where(eq(clients.id, params.id));
   return NextResponse.json({ ok: true });
 }

@@ -8,10 +8,15 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const clientId = url.searchParams.get('client_id') ?? url.searchParams.get('project_id');
   if (!clientId) return NextResponse.json({ error: 'client_id is required' }, { status: 400 });
-  const client = getClient(clientId);
+
+  const [client, brain] = await Promise.all([
+    getClient(clientId),
+    getClientBrain(clientId),
+  ]);
   if (!client) return NextResponse.json({ error: 'client not found' }, { status: 404 });
+
   try {
-    const briefing = await generateBriefing(getClientBrain(clientId));
+    const briefing = await generateBriefing(brain);
     return NextResponse.json({ briefing });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

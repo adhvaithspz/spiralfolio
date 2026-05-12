@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  *
  * Finds a client by name with a three-pass strategy:
  *   1. Exact match (case-insensitive)
- *   2. Starts-with match
+ *   2. Normalised exact (strip punctuation/spaces)
  *   3. Contains match
  *
  * Used by the Apps Script integration to resolve a client name from the
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });
 
   const needle = name.toLowerCase().replace(/[\s\-_.]+/g, '');
-  const all = listClients();
+  const all = await listClients();
 
   // Pass 1: exact
   let match = all.find(c => c.name.toLowerCase() === name.toLowerCase());

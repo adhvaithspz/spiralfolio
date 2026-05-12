@@ -15,13 +15,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'client_id and call_id are required' }, { status: 400 });
   }
 
-  const client = getClient(clientId);
-  const call = db.select().from(calls).where(eq(calls.id, callId)).get();
+  const [[call], client] = await Promise.all([
+    db.select().from(calls).where(eq(calls.id, callId)).limit(1),
+    getClient(clientId),
+  ]);
   if (!client || !call) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-  const brain = call.brainSnapshot
-    ? safeParse<ClientBrain>(call.brainSnapshot, getClientBrain(clientId))
-    : getClientBrain(clientId);
+  const brain: ClientBrain = call.brainSnapshot
+    ? safeParse<ClientBrain>(call.brainSnapshot, await getClientBrain(clientId))
+    : await getClientBrain(clientId);
 
   const result = await postCallDigest({
     clientId,
