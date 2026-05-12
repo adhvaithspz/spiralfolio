@@ -1,0 +1,6 @@
+appscript-library/
+stage-appscript-library/
+spiralfolio/.next/
+spiralfolio/node_modules/
+spiralfolio/drizzle/
+spiralfolio/*.db

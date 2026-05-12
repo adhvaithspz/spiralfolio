@@ -291,6 +291,8 @@ const CLIENT_TEAM_MAP = {
   'rasa':              { ad: 'Farouk',  pm: 'Furqaan'  },
   'matik':             { ad: 'Farouk',  pm: 'Furqaan'  },
   'ramp':              { ad: 'Gajan',   pm: 'Helen'    },
+  'fieldguide':        { ad: 'Lazar',   pm: 'Josh'    },
+  'aaa':               { ad: 'Daria',   pm: 'Eric'    },
 };
 
 /**
