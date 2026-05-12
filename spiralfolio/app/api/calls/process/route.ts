@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { checkApiKey } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { calls } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -15,6 +16,9 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
+  const authError = checkApiKey(req);
+  if (authError) return authError;
+
   const body = await req.json().catch(() => ({}));
   const clientId = String(body.client_id ?? body.clientId ?? body.project_id ?? body.projectId ?? '').trim();
   const transcript = String(body.transcript_text ?? body.transcript ?? '').trim();

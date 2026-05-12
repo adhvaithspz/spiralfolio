@@ -438,6 +438,17 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, recording.start_time);
     }
 
+    // ── SpiralFolio brain update ────────────────────────────────
+    // Non-blocking: errors are logged but never thrown.
+    postToSpiralFolio({
+      clientName: clientName,
+      transcript: analysisTranscript,
+      callDate:   recording.start_time,
+      callType:   callType,
+      pmName:     pmName,
+      adName:     adName,
+    });
+
     // CHANGED: pass recording.start_time so the sheet stores the actual call date
     storeTranscriptWithDocLink(
       clientName, meetingId, pmName, adName,
