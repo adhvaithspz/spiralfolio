@@ -1,30 +1,51 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn('rounded-lg border border-border bg-surface', className)}
-      {...props}
-    />
-  );
+type CardVariant = 'default' | 'elevated' | 'flush';
+
+export function Card({
+  className,
+  variant = 'default',
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { variant?: CardVariant }) {
+  const base = 'rounded-xl border border-border';
+  const style =
+    variant === 'elevated'
+      ? 'surface-glass shadow-card-hover'
+      : variant === 'flush'
+        ? 'bg-surface'
+        : 'surface-glass';
+  return <div className={cn(base, style, className)} {...props} />;
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex items-center justify-between border-b border-border px-4 py-3', className)}
+      className={cn(
+        'flex items-center justify-between gap-3 border-b border-border px-4 py-3',
+        className,
+      )}
       {...props}
     />
   );
 }
 
-export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+export function CardTitle({
+  className,
+  icon,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLHeadingElement> & { icon?: React.ReactNode }) {
   return (
     <h3
-      className={cn('text-[12px] font-semibold uppercase tracking-wider text-text-dim', className)}
-      {...props}
-    />
+      className={cn(
+        'flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text-dim',
+        className,
+      )}
+      {...props}>
+      {icon && <span className="text-text-muted">{icon}</span>}
+      {children}
+    </h3>
   );
 }
 

@@ -1,30 +1,51 @@
 import { ClientList } from '@/components/client/ClientList';
-import { NewClientDialog } from '@/components/client/NewClientDialog';
-import { BRAND } from '@/lib/brand';
-import { getDashboardData } from '@/lib/db/queries';
+import { PortfolioHeader } from '@/components/dashboard/PortfolioHeader';
+import { HealthDistributionBar } from '@/components/dashboard/HealthDistribution';
+import { NeedsAttention } from '@/components/dashboard/NeedsAttention';
+import { RecentActivity } from '@/components/dashboard/RecentActivity';
+import { getPortfolioData } from '@/lib/db/queries';
+import {
+  computePortfolioKPIs,
+  computeHealthDistribution,
+  computeAttentionItems,
+} from '@/lib/portfolio-stats';
 
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const items = await getDashboardData();
+  const { items, recentActivity } = await getPortfolioData();
 
-  const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  });
+  const kpis = computePortfolioKPIs(items);
+  const distribution = computeHealthDistribution(items);
+  const attention = computeAttentionItems(items, 6);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-text">{BRAND.name}</h1>
-          <p className="mt-0.5 text-[12px] text-text-muted">{today} · {items.length} active client{items.length === 1 ? '' : 's'}</p>
+      <PortfolioHeader kpis={kpis} />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <div className="lg:col-span-5">
+          <HealthDistributionBar dist={distribution} />
         </div>
-        <NewClientDialog />
+        <div className="lg:col-span-7">
+          <NeedsAttention items={attention} />
+        </div>
       </div>
 
-      <ClientList items={items} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <section className="space-y-3 xl:col-span-8">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.16em] text-text-dim">
+              All Clients
+            </h2>
+            <span className="text-[11px] text-text-muted">{items.length} total</span>
+          </div>
+          <ClientList items={items} />
+        </section>
+        <aside className="xl:col-span-4">
+          <RecentActivity items={recentActivity} />
+        </aside>
+      </div>
     </div>
   );
 }

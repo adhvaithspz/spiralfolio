@@ -1,25 +1,31 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ChevronLeft } from 'lucide-react';
+import {
+  Target,
+  AlertTriangle,
+  ArrowUpFromLine,
+  ArrowDownToLine,
+  Sparkles,
+  Trophy,
+  Flag,
+  CheckCircle2,
+} from 'lucide-react';
 
 import { getClient, getClientBrain } from '@/lib/db/queries';
 import { computeBrainStats } from '@/lib/brain-stats';
-import { formatDate } from '@/lib/utils';
 import type { ClientBrain } from '@/lib/db/brain';
 
-import { HealthIndicator } from '@/components/shared/HealthIndicator';
-import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Stat } from '@/components/shared/Stat';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/shared/Card';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { StatusBadge } from '@/components/shared/StatusBadge';
 
+import { ClientHero } from '@/components/client/ClientHero';
 import { BrainTabs } from '@/components/client/BrainTabs';
 import { DeliverableBoard } from '@/components/client/DeliverableBoard';
 import { ContactList } from '@/components/client/ContactList';
 import { CallTimeline } from '@/components/client/CallTimeline';
 import { DocumentsPanel } from '@/components/client/DocumentsPanel';
 import { QuickBriefing } from '@/components/client/QuickBriefing';
-import { TranscriptUploader } from '@/components/calls/TranscriptUploader';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,48 +40,32 @@ export default async function ClientPage({ params }: { params: { id: string } })
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/dashboard"
-          className="inline-flex items-center gap-1 text-[12px] text-text-muted hover:text-text">
-          <ChevronLeft className="h-3.5 w-3.5" /> All clients
-        </Link>
-        <div className="mt-2 flex items-end justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <HealthIndicator status={client.status ?? 'on-track'} />
-              <h1 className="text-2xl font-semibold tracking-tight text-text">{client.name}</h1>
-              <StatusBadge status={client.status ?? 'on-track'} />
-            </div>
-            <div className="mt-1 text-[13px] text-text-muted">
-              {client.engagement && <>{client.engagement}</>}
-              {client.pmName && (
-                <>
-                  {client.engagement ? ' · ' : ''}PM <span className="text-text-dim">{client.pmName}</span>
-                </>
-              )}
-              {client.adName && (
-                <>
-                  {' '}
-                  · AD <span className="text-text-dim">{client.adName}</span>
-                </>
-              )}
-              {stats.lastCallDate && <> · Last call {formatDate(stats.lastCallDate)}</>}
-            </div>
-          </div>
-          <TranscriptUploader clientId={client.id} />
-        </div>
-      </div>
+      <ClientHero client={client} lastCallDate={stats.lastCallDate} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Goals" value={stats.goals} />
         <Stat
-          label="Open Concerns"
+          label="Goals"
+          value={stats.goals}
+          icon={<Target className="h-3.5 w-3.5" />}
+        />
+        <Stat
+          label="Open concerns"
           value={stats.openConcerns}
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
           accent={stats.openConcerns ? 'yellow' : 'default'}
         />
-        <Stat label="We Owe" value={stats.ourPending} accent={stats.ourPending ? 'blue' : 'default'} />
-        <Stat label="They Owe" value={stats.theirPending} accent={stats.theirPending ? 'blue' : 'default'} />
+        <Stat
+          label="We owe"
+          value={stats.ourPending}
+          icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+          accent={stats.ourPending ? 'blue' : 'default'}
+        />
+        <Stat
+          label="They owe"
+          value={stats.theirPending}
+          icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+          accent={stats.theirPending ? 'blue' : 'default'}
+        />
       </div>
 
       <BrainTabs
@@ -120,28 +110,54 @@ function buildInternalTeam(
 }
 
 function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string }) {
+  const concerns = brain.open_concerns ?? [];
+  const wins = brain.wins ?? [];
+  const decisions = brain.decisions_made ?? [];
+  const goals = brain.client_goals ?? [];
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         <Card>
           <CardHeader>
-            <CardTitle>Open Concerns</CardTitle>
-            <span className="stat-num text-[12px] text-text-muted">{brain.open_concerns?.length ?? 0}</span>
+            <CardTitle icon={<AlertTriangle className="h-3.5 w-3.5 text-status-yellow" />}>
+              Open Concerns
+            </CardTitle>
+            <span className="stat-num rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
+              {concerns.length}
+            </span>
           </CardHeader>
           <CardBody className="p-0">
-            {!brain.open_concerns?.length ? (
-              <div className="p-4">
-                <EmptyState title="No open concerns. 🎉" description="Nothing flagged at the moment." />
+            {concerns.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  title="All clear."
+                  description="Nothing flagged at the moment."
+                />
               </div>
             ) : (
               <ul className="divide-y divide-border">
-                {brain.open_concerns.map((c, i) => (
-                  <li key={i} className="flex items-start justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
+                {concerns.map((c, i) => (
+                  <li
+                    key={i}
+                    className="group relative flex items-start justify-between gap-3 px-4 py-3 transition hover:bg-surface-2">
+                    <span
+                      aria-hidden
+                      className="absolute inset-y-0 left-0 w-[2px] bg-status-yellow/60"
+                    />
+                    <div className="min-w-0 pl-2">
                       <div className="text-[13px] text-text">{c.concern}</div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text-muted">
-                        {c.owner && <span>Owner · {c.owner}</span>}
-                        {c.blocker_for && <span>Blocking · {c.blocker_for}</span>}
+                        {c.owner && (
+                          <span>
+                            Owner · <span className="text-text-dim">{c.owner}</span>
+                          </span>
+                        )}
+                        {c.blocker_for && (
+                          <span className="text-status-red">
+                            Blocking · {c.blocker_for}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <StatusBadge status={c.status ?? 'open'} />
@@ -152,75 +168,113 @@ function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Wins</CardTitle>
-            <span className="stat-num text-[12px] text-text-muted">{brain.wins?.length ?? 0}</span>
-          </CardHeader>
-          <CardBody>
-            {!brain.wins?.length ? (
-              <EmptyState title="No wins logged yet." description="Wins are extracted from processed calls." />
-            ) : (
-              <ul className="space-y-2 text-[13px]">
-                {brain.wins.slice(0, 8).map((w, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-status-green" />
-                    <span className="text-text">{w}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle icon={<Trophy className="h-3.5 w-3.5 text-status-green" />}>
+                Recent Wins
+              </CardTitle>
+              <span className="stat-num rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
+                {wins.length}
+              </span>
+            </CardHeader>
+            <CardBody>
+              {wins.length === 0 ? (
+                <EmptyState
+                  title="No wins logged yet."
+                  description="Wins are extracted from processed calls."
+                />
+              ) : (
+                <ul className="space-y-2 text-[13px]">
+                  {wins.slice(0, 6).map((w, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-status-green shadow-[0_0_0_3px_rgba(34,197,94,0.15)]" />
+                      <span className="text-text">{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle icon={<CheckCircle2 className="h-3.5 w-3.5 text-accent" />}>
+                Recent Decisions
+              </CardTitle>
+              <span className="stat-num rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
+                {decisions.length}
+              </span>
+            </CardHeader>
+            <CardBody>
+              {decisions.length === 0 ? (
+                <EmptyState title="No decisions logged." />
+              ) : (
+                <ul className="space-y-2 text-[13px]">
+                  {decisions.slice(0, 6).map((d, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent shadow-[0_0_0_3px_rgba(99,102,241,0.18)]" />
+                      <span className="text-text">{d}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+        </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Goals & Success Metric</CardTitle>
+            <CardTitle icon={<Flag className="h-3.5 w-3.5 text-accent" />}>
+              Goals & Success Metric
+            </CardTitle>
           </CardHeader>
-          <CardBody className="space-y-3 text-[13px]">
+          <CardBody className="space-y-4 text-[13px]">
             {brain.success_metric && (
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-muted">Success metric</div>
-                <div className="mt-0.5 text-text">{brain.success_metric}</div>
+              <div className="rounded-lg border border-accent/20 bg-accent-soft px-3.5 py-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">
+                  Success metric
+                </div>
+                <div className="mt-1 text-text">{brain.success_metric}</div>
               </div>
             )}
-            {!!brain.client_goals?.length && (
+            {goals.length > 0 ? (
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-text-muted">Client goals</div>
-                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-text">
-                  {brain.client_goals.map((g, i) => (
-                    <li key={i}>{g}</li>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                  Client goals
+                </div>
+                <ul className="mt-2 space-y-1.5">
+                  {goals.map((g, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="mt-[3px] inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-[9px] font-semibold text-text-muted">
+                        {i + 1}
+                      </span>
+                      <span className="text-text">{g}</span>
+                    </li>
                   ))}
                 </ul>
               </div>
-            )}
-            {!brain.success_metric && !brain.client_goals?.length && (
-              <EmptyState title="No goals captured yet." />
+            ) : (
+              !brain.success_metric && <EmptyState title="No goals captured yet." />
             )}
           </CardBody>
         </Card>
       </div>
 
       <div className="space-y-4">
-        <QuickBriefing clientId={clientId} />
-        {!!brain.decisions_made?.length && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Decisions</CardTitle>
-              <span className="stat-num text-[12px] text-text-muted">{brain.decisions_made.length}</span>
-            </CardHeader>
-            <CardBody>
-              <ul className="space-y-2 text-[13px]">
-                {brain.decisions_made.slice(0, 6).map((d, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
-                    <span className="text-text">{d}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardBody>
-          </Card>
-        )}
+        <div className="relative overflow-hidden rounded-xl border border-accent/25 bg-gradient-to-br from-accent/8 via-surface to-surface p-px shadow-glow-soft">
+          <div className="rounded-[11px] bg-surface">
+            <div className="flex items-center gap-2 border-b border-accent/15 px-4 py-3">
+              <Sparkles className="h-3.5 w-3.5 text-accent" />
+              <h3 className="text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text">
+                AI Briefing
+              </h3>
+            </div>
+            <div className="p-4">
+              <QuickBriefing clientId={clientId} compact />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

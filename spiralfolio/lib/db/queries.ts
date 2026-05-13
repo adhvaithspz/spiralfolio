@@ -272,3 +272,102 @@ export async function getDashboardData(): Promise<
     },
   }));
 }
+
+/**
+ * Full portfolio load for the dashboard view: hydrates everything the
+ * dashboard needs (KPIs, health distribution, attention items, recent
+ * activity, per-client cadence) from a small set of parallel table scans.
+ *
+ * Each child table is scanned once and grouped in-memory by clientId — far
+ * cheaper than N round-trips to assemble per-client brains, and good enough
+ * for portfolios in the dozens-to-low-hundreds range.
+ */
+export async function getPortfolioData() {
+  const [
+    allClients,
+    allConcerns,
+    allDeliverables,
+    allWins,
+    allCalls,
+  ] = await Promise.all([
+    db.select().from(clients).orderBy(desc(clients.updatedAt)),
+    db.select().from(concerns),
+    db.select().from(deliverables),
+    db.select().from(wins),
+    db.select().from(calls).orderBy(desc(calls.callDate)),
+  ]);
+
+  const concernsByClient = groupBy(allConcerns, c => c.clientId);
+  const delivByClient = groupBy(allDeliverables, d => d.clientId);
+  const winsByClient = groupBy(allWins, w => w.clientId);
+  const callsByClient = groupBy(allCalls, c => c.clientId);
+
+  const items = allClients.map(client => {
+    const cs = concernsByClient.get(client.id) ?? [];
+    const ds = delivByClient.get(client.id) ?? [];
+    const ws = winsByClient.get(client.id) ?? [];
+    const clientCalls = callsByClient.get(client.id) ?? [];
+    const openConcerns = cs.filter(c => c.status !== 'resolved');
+
+    return {
+      client,
+      brain: {
+        open_concerns: openConcerns.map(c => ({
+          concern: c.concern,
+          owner: c.owner ?? undefined,
+          blocker_for: c.blockerFor ?? undefined,
+          status: c.status,
+        })),
+        wins: ws.map(w => w.text),
+      } as unknown as import('@/lib/db/brain').ClientBrain,
+      stats: {
+        goals: 0,
+        openConcerns: openConcerns.length,
+        ourPending: ds.filter(d => d.side === 'us' && isPending(d.status)).length,
+        theirPending: ds.filter(d => d.side === 'client' && isPending(d.status)).length,
+        callCount: clientCalls.length,
+        lastCallDate: clientCalls[0]?.callDate ?? null,
+      } as import('@/lib/brain-stats').BrainStats,
+      cadence: buildCadenceFromCallDates(clientCalls.map(c => c.callDate)),
+    };
+  });
+
+  const recentActivity = allCalls.slice(0, 6).map(c => {
+    const client = allClients.find(cl => cl.id === c.clientId);
+    return {
+      callId: c.id,
+      clientId: c.clientId,
+      clientName: client?.name ?? 'Unknown',
+      callDate: c.callDate,
+      callType: c.callType,
+      callSummary: c.callSummary,
+    };
+  });
+
+  return { items, recentActivity };
+}
+
+function groupBy<T, K>(arr: T[], key: (t: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const item of arr) {
+    const k = key(item);
+    const bucket = out.get(k);
+    if (bucket) bucket.push(item);
+    else out.set(k, [item]);
+  }
+  return out;
+}
+
+function buildCadenceFromCallDates(dates: string[], buckets = 12, bucketDays = 7): number[] {
+  const out = new Array<number>(buckets).fill(0);
+  const now = Date.now();
+  for (const iso of dates) {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) continue;
+    const ageDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+    const idxFromEnd = Math.floor(ageDays / bucketDays);
+    if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
+    out[buckets - 1 - idxFromEnd]++;
+  }
+  return out;
+}
