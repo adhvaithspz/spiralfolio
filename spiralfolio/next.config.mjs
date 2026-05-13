@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ['better-sqlite3', 'pdf-parse', 'mammoth'],
+    serverComponentsExternalPackages: ['better-sqlite3', 'pdf-parse', 'mammoth', '@libsql/client'],
   },
   webpack: config => {
     config.externals = config.externals || [];

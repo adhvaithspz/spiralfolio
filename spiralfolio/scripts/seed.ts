@@ -10,6 +10,9 @@
  *
  * Idempotent — skips rows that already exist.
  */
+import { config } from 'dotenv';
+config({ path: '.env.local' });
+
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { eq } from 'drizzle-orm';
