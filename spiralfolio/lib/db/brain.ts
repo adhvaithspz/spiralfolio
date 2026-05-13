@@ -47,14 +47,6 @@ export type BrainCallLogEntry = {
   attendees_internal?: string[];
 };
 
-export type BrainICP = {
-  primary?: string;
-  secondary?: string;
-  key_motivators?: string[];
-  key_objections?: string[];
-  demographic_signals?: { signal: string; confirmed?: boolean }[];
-};
-
 export type ClientBrain = {
   client?: string; // company/account name
   pm?: string;
@@ -72,7 +64,6 @@ export type ClientBrain = {
   client_deliverables?: BrainDeliverable[];
   decisions_made?: string[];
   wins?: string[];
-  icp_notes?: BrainICP;
   documents?: BrainDocumentRef[];
   call_log?: BrainCallLogEntry[];
 };
@@ -89,6 +80,5 @@ export const EMPTY_BRAIN: ClientBrain = {
   wins: [],
   documents: [],
   call_log: [],
-  icp_notes: {},
 };
 

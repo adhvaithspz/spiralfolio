@@ -7,15 +7,36 @@
     'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
+
+  /* Surface tokens — driven by Tailwind but exposed for raw CSS shadows/gradients */
+  --color-bg: #0b0b0e;
+  --color-surface: #15151a;
+  --color-surface-2: #1c1c22;
+  --color-border: #26262c;
+  --color-border-strong: #393941;
+  --color-accent: #6366f1;
+  --color-accent-soft: rgba(99, 102, 241, 0.16);
 }
 
 html,
 body {
-  background-color: #0d0d0f;
+  background-color: var(--color-bg);
   color: #f4f4f5;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle page-level ambient gradient — barely there, but adds depth */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 60% 50% at 18% -10%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 90% 0%, rgba(56, 189, 248, 0.06), transparent 60%);
 }
 
 ::selection {
@@ -31,15 +52,75 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: #2a2a2e;
+  background: #2a2a30;
   border-radius: 8px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3f;
+  background: #3a3a42;
 }
 
 /* shared utility for "stat number" */
 .stat-num {
   font-family: var(--font-mono);
   font-feature-settings: 'tnum';
+}
+
+/* Dot grid overlay — used in hero surfaces */
+.bg-dot-grid {
+  background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+/* Spotlight gradient — for hero headers */
+.bg-spotlight {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(99, 102, 241, 0.22), transparent 60%),
+    linear-gradient(180deg, #16161c 0%, #101015 100%);
+}
+
+/* Glassy surface — for stat tiles and rows */
+.surface-glass {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0) 40%),
+    var(--color-surface);
+}
+
+/* Soft inner ring used on hovered list rows / focused cards */
+.ring-soft {
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+/* Shimmer for skeletons or "alive" elements */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0.10) 50%,
+    rgba(255, 255, 255, 0.04) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* Soft pulse used on at-risk / blocked indicators */
+@keyframes statusPulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 0.9; }
+  50% { box-shadow: 0 0 0 6px transparent; opacity: 0.4; }
+}
+.animate-status-pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+/* Subtle rise-on-mount used for hero sections */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise {
+  animation: riseIn 0.45s ease-out both;
 }

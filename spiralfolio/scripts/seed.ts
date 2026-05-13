@@ -211,8 +211,6 @@ async function main() {
       adName: AD_NAME[c.ad] ?? c.ad,
       status: 'on-track',
       successMetric: null,
-      slackChannelId: null,
-      asanaProjectId: null,
       driveFolderUrl: null,
       createdAt: now,
       updatedAt: now,

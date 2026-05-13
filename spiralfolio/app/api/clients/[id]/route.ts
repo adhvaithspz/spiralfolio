@@ -26,8 +26,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     'adName',
     'status',
     'successMetric',
-    'slackChannelId',
-    'asanaProjectId',
     'driveFolderUrl',
   ] as const) {
     if (key in body) allowed[key] = body[key];

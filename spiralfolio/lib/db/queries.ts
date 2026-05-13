@@ -1,5 +1,5 @@
 import 'server-only';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, count, desc, eq, max, ne } from 'drizzle-orm';
 import { db } from './index';
 import {
   calls,
@@ -10,7 +10,6 @@ import {
   deliverables,
   documents,
   goals,
-  icpProfile,
   wins,
   type Call,
   type Client,
@@ -26,7 +25,6 @@ import {
   type BrainContact,
   type BrainDeliverable,
   type BrainDocumentRef,
-  type BrainICP,
   type ClientBrain,
 } from './brain';
 import { safeParse } from '@/lib/utils/json';
@@ -70,10 +68,6 @@ export async function listWins(clientId: string) {
   return db.select().from(wins).where(eq(wins.clientId, clientId)).orderBy(desc(wins.wonAt));
 }
 
-export async function getIcpProfile(clientId: string) {
-  const [row] = await db.select().from(icpProfile).where(eq(icpProfile.clientId, clientId)).limit(1);
-  return row;
-}
 
 export async function listDocuments(clientId: string): Promise<Document[]> {
   return db
@@ -138,48 +132,34 @@ function toBrainCallEntry(c: Call): BrainCallLogEntry {
   };
 }
 
-function toBrainIcp(row: Awaited<ReturnType<typeof getIcpProfile>>): BrainICP {
-  if (!row) return {};
-  return {
-    primary: row.primarySegment ?? undefined,
-    secondary: row.secondarySegment ?? undefined,
-    key_motivators: safeParse<string[]>(row.motivators ?? '[]', []),
-    key_objections: safeParse<string[]>(row.objections ?? '[]', []),
-    demographic_signals: safeParse<{ signal: string; confirmed?: boolean }[]>(
-      row.demographicSignals ?? '[]',
-      []
-    ),
-  };
-}
 
 // ─── Aggregate read: assemble the full ClientBrain from joined tables ────────
 
 export async function getClientBrain(clientId: string): Promise<ClientBrain> {
-  const c = await getClient(clientId);
-  if (!c) return EMPTY_BRAIN;
-
-  // Fetch all child tables in parallel
+  // Parallelise getClient alongside all child queries — no serial hop.
   const [
+    c,
     goalRows,
     allContacts,
     allConcerns,
     allDeliverables,
     decisionRows,
     winRows,
-    icpRow,
     docRows,
     callRows,
   ] = await Promise.all([
+    getClient(clientId),
     listGoals(clientId),
     listContacts(clientId),
     listConcerns(clientId),
     listDeliverables(clientId),
     listDecisions(clientId),
     listWins(clientId),
-    getIcpProfile(clientId),
     listDocuments(clientId),
     listCalls(clientId),
   ]);
+
+  if (!c) return EMPTY_BRAIN;
 
   const lastCallRow = callRows[0];
   const lastUpdated = c.updatedAt ?? c.createdAt ?? null;
@@ -201,7 +181,6 @@ export async function getClientBrain(clientId: string): Promise<ClientBrain> {
     client_deliverables: allDeliverables.filter(d => d.side === 'client').map(toBrainDeliverable),
     decisions_made: decisionRows.map(d => d.text),
     wins: winRows.map(w => w.text),
-    icp_notes: toBrainIcp(icpRow),
     documents: docRows.map(toBrainDocument),
     call_log: callRows.map(toBrainCallEntry),
   };
@@ -255,4 +234,143 @@ export async function listBlockingConcerns(clientId: string) {
 export async function listCallsSafe(clientId: string): Promise<Call[]> {
   const rows = await listCalls(clientId);
   return rows.map(c => ({ ...c, coachingDoc: null }));
+}
+
+/**
+ * Single-shot dashboard load: 3 HTTP requests instead of 1 + (N × 10).
+ * Fetches all clients, then aggregates open-concern counts and latest call
+ * dates in two parallel GROUP BY queries — no per-client round trips.
+ */
+export async function getDashboardData(): Promise<
+  Array<{ client: Client; stats: import('@/lib/brain-stats').BrainStats }>
+> {
+  const [allClients, concernCounts, lastCalls] = await Promise.all([
+    db.select().from(clients).orderBy(desc(clients.updatedAt)),
+    db
+      .select({ clientId: concerns.clientId, n: count() })
+      .from(concerns)
+      .where(ne(concerns.status, 'resolved'))
+      .groupBy(concerns.clientId),
+    db
+      .select({ clientId: calls.clientId, lastDate: max(calls.callDate) })
+      .from(calls)
+      .groupBy(calls.clientId),
+  ]);
+
+  const concernMap = new Map(concernCounts.map(r => [r.clientId, r.n]));
+  const callMap = new Map(lastCalls.map(r => [r.clientId, r.lastDate ?? null]));
+
+  return allClients.map(client => ({
+    client,
+    stats: {
+      goals: 0,
+      openConcerns: concernMap.get(client.id) ?? 0,
+      ourPending: 0,
+      theirPending: 0,
+      callCount: 0,
+      lastCallDate: callMap.get(client.id) ?? null,
+    },
+  }));
+}
+
+/**
+ * Full portfolio load for the dashboard view: hydrates everything the
+ * dashboard needs (KPIs, health distribution, attention items, recent
+ * activity, per-client cadence) from a small set of parallel table scans.
+ *
+ * Each child table is scanned once and grouped in-memory by clientId — far
+ * cheaper than N round-trips to assemble per-client brains, and good enough
+ * for portfolios in the dozens-to-low-hundreds range.
+ */
+export async function getPortfolioData() {
+  const [
+    allClients,
+    allConcerns,
+    allDeliverables,
+    allWins,
+    allCalls,
+  ] = await Promise.all([
+    db.select().from(clients).orderBy(desc(clients.updatedAt)),
+    db.select().from(concerns),
+    db.select().from(deliverables),
+    db.select().from(wins),
+    db.select().from(calls).orderBy(desc(calls.callDate)),
+  ]);
+
+  const concernsByClient = groupBy(allConcerns, c => c.clientId);
+  const delivByClient = groupBy(allDeliverables, d => d.clientId);
+  const winsByClient = groupBy(allWins, w => w.clientId);
+  const callsByClient = groupBy(allCalls, c => c.clientId);
+
+  const items = allClients.map(client => {
+    const cs = concernsByClient.get(client.id) ?? [];
+    const ds = delivByClient.get(client.id) ?? [];
+    const ws = winsByClient.get(client.id) ?? [];
+    const clientCalls = callsByClient.get(client.id) ?? [];
+    const openConcerns = cs.filter(c => c.status !== 'resolved');
+
+    return {
+      client,
+      brain: {
+        open_concerns: openConcerns.map(c => ({
+          concern: c.concern,
+          owner: c.owner ?? undefined,
+          blocker_for: c.blockerFor ?? undefined,
+          status: c.status,
+        })),
+        wins: ws.map(w => w.text),
+      } as unknown as import('@/lib/db/brain').ClientBrain,
+      stats: {
+        goals: 0,
+        openConcerns: openConcerns.length,
+        ourPending: ds.filter(d => d.side === 'us' && isPending(d.status)).length,
+        theirPending: ds.filter(d => d.side === 'client' && isPending(d.status)).length,
+        callCount: clientCalls.length,
+        lastCallDate: clientCalls[0]?.callDate ?? null,
+      } as import('@/lib/brain-stats').BrainStats,
+      cadence: buildCadenceFromCallDates(clientCalls.map(c => c.callDate)),
+    };
+  });
+
+  const recentActivity = allCalls.slice(0, 6).map(c => {
+    const client = allClients.find(cl => cl.id === c.clientId);
+    return {
+      callId: c.id,
+      clientId: c.clientId,
+      clientName: client?.name ?? 'Unknown',
+      callDate: c.callDate,
+      callType: c.callType,
+      callSummary: c.callSummary,
+    };
+  });
+
+  // Portfolio-wide weekly call volume for the past 16 weeks (oldest → newest).
+  const portfolioCadence = buildCadenceFromCallDates(allCalls.map(c => c.callDate), 16, 7);
+
+  return { items, recentActivity, portfolioCadence };
+}
+
+function groupBy<T, K>(arr: T[], key: (t: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const item of arr) {
+    const k = key(item);
+    const bucket = out.get(k);
+    if (bucket) bucket.push(item);
+    else out.set(k, [item]);
+  }
+  return out;
+}
+
+function buildCadenceFromCallDates(dates: string[], buckets = 12, bucketDays = 7): number[] {
+  const out = new Array<number>(buckets).fill(0);
+  const now = Date.now();
+  for (const iso of dates) {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) continue;
+    const ageDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+    const idxFromEnd = Math.floor(ageDays / bucketDays);
+    if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
+    out[buckets - 1 - idxFromEnd]++;
+  }
+  return out;
 }

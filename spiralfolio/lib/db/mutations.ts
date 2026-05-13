@@ -9,7 +9,6 @@ import {
   decisions,
   deliverables,
   goals,
-  icpProfile,
   wins,
 } from './schema';
 import { nanoid } from '@/lib/utils/nanoid';
@@ -286,19 +285,6 @@ export async function importBrainIntoTables(opts: {
   }
   for (const text of brain.wins ?? []) {
     await db.insert(wins).values({ id: nanoid(), clientId, text, wonAt: at });
-  }
-
-  if (brain.icp_notes && Object.keys(brain.icp_notes).length > 0) {
-    const icp = brain.icp_notes;
-    await db.insert(icpProfile).values({
-      clientId,
-      primarySegment: icp.primary ?? null,
-      secondarySegment: icp.secondary ?? null,
-      motivators: safeStringify(icp.key_motivators ?? []),
-      objections: safeStringify(icp.key_objections ?? []),
-      demographicSignals: safeStringify(icp.demographic_signals ?? []),
-      updatedAt: at,
-    });
   }
 
   for (const entry of brain.call_log ?? []) {

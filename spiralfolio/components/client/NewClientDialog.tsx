@@ -24,15 +24,13 @@ export function NewClientDialog() {
       const res = await fetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+          body: JSON.stringify({
           name: fd.get('name'),
           engagement: fd.get('engagement') || null,
           pmName: fd.get('pmName') || null,
           adName: fd.get('adName') || null,
           status: fd.get('status') || 'on-track',
           successMetric: fd.get('successMetric') || null,
-          slackChannelId: fd.get('slackChannelId') || null,
-          asanaProjectId: fd.get('asanaProjectId') || null,
           driveFolderUrl: fd.get('driveFolderUrl') || null,
         }),
       });
@@ -80,8 +78,6 @@ export function NewClientDialog() {
                 </select>
               </div>
               <Field label="Success Metric" name="successMetric" />
-              <Field label="Slack Channel ID" name="slackChannelId" placeholder="C0123ABCD" />
-              <Field label="Asana Project ID" name="asanaProjectId" />
               <Field
                 label="Drive Folder URL"
                 name="driveFolderUrl"
