@@ -344,7 +344,10 @@ export async function getPortfolioData() {
     };
   });
 
-  return { items, recentActivity };
+  // Portfolio-wide weekly call volume for the past 16 weeks (oldest → newest).
+  const portfolioCadence = buildCadenceFromCallDates(allCalls.map(c => c.callDate), 16, 7);
+
+  return { items, recentActivity, portfolioCadence };
 }
 
 function groupBy<T, K>(arr: T[], key: (t: T) => K): Map<K, T[]> {

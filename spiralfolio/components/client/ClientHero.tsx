@@ -8,14 +8,10 @@ import { formatDate } from '@/lib/utils';
 import type { Client } from '@/lib/db/schema';
 
 const STATUS_TINT: Record<string, string> = {
-  'on-track':
-    'before:bg-[radial-gradient(ellipse_at_top_left,rgba(34,197,94,0.15),transparent_60%)]',
-  'at-risk':
-    'before:bg-[radial-gradient(ellipse_at_top_left,rgba(234,179,8,0.18),transparent_60%)]',
-  blocked:
-    'before:bg-[radial-gradient(ellipse_at_top_left,rgba(239,68,68,0.20),transparent_60%)]',
-  complete:
-    'before:bg-[radial-gradient(ellipse_at_top_left,rgba(99,102,241,0.16),transparent_60%)]',
+  'on-track': 'before:bg-[radial-gradient(ellipse_at_top_left,rgba(34,197,94,0.15),transparent_60%)]',
+  'at-risk': 'before:bg-[radial-gradient(ellipse_at_top_left,rgba(234,179,8,0.18),transparent_60%)]',
+  blocked: 'before:bg-[radial-gradient(ellipse_at_top_left,rgba(239,68,68,0.20),transparent_60%)]',
+  complete: 'before:bg-[radial-gradient(ellipse_at_top_left,rgba(99,102,241,0.16),transparent_60%)]',
 };
 
 const STATUS_ACCENT: Record<string, string> = {
@@ -25,13 +21,7 @@ const STATUS_ACCENT: Record<string, string> = {
   complete: 'from-text-muted/40 via-text-muted/20 to-transparent',
 };
 
-export function ClientHero({
-  client,
-  lastCallDate,
-}: {
-  client: Client;
-  lastCallDate: string | null;
-}) {
+export function ClientHero({ client, lastCallDate }: { client: Client; lastCallDate: string | null }) {
   const status = client.status ?? 'on-track';
 
   return (
@@ -61,9 +51,7 @@ export function ClientHero({
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-text-dim">
-              {client.engagement && (
-                <Chip icon={<Building2 className="h-3 w-3" />}>{client.engagement}</Chip>
-              )}
+              {client.engagement && <Chip icon={<Building2 className="h-3 w-3" />}>{client.engagement}</Chip>}
               {client.pmName && (
                 <Chip icon={<User2 className="h-3 w-3" />} label="PM">
                   {client.pmName}
@@ -91,15 +79,7 @@ export function ClientHero({
   );
 }
 
-function Chip({
-  icon,
-  label,
-  children,
-}: {
-  icon: React.ReactNode;
-  label?: string;
-  children: React.ReactNode;
-}) {
+function Chip({ icon, label, children }: { icon: React.ReactNode; label?: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/80 px-2.5 py-1 text-[11.5px] text-text-dim">
       <span className="text-text-muted">{icon}</span>

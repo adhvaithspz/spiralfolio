@@ -35,8 +35,8 @@ const KIND: Record<
 
 export function NeedsAttention({ items }: { items: AttentionItem[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border surface-glass">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border surface-glass">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="relative flex h-5 w-5 items-center justify-center rounded-md bg-status-yellow/12 text-status-yellow">
             <AlertTriangle className="h-3 w-3" />
@@ -50,14 +50,14 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
         </span>
       </div>
       {items.length === 0 ? (
-        <div className="p-6">
+        <div className="flex flex-1 items-center justify-center p-6">
           <EmptyState
             title="All clear."
             description="No blocked clients, blockers, or stale accounts right now."
           />
         </div>
       ) : (
-        <ul className="divide-y divide-border">
+        <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
           {items.map((it, i) => {
             const meta = KIND[it.kind];
             return (

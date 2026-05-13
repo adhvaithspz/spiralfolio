@@ -1,9 +1,6 @@
 import { notFound } from 'next/navigation';
 import {
-  Target,
   AlertTriangle,
-  ArrowUpFromLine,
-  ArrowDownToLine,
   Sparkles,
   Trophy,
   Flag,
@@ -14,12 +11,12 @@ import { getClient, getClientBrain } from '@/lib/db/queries';
 import { computeBrainStats } from '@/lib/brain-stats';
 import type { ClientBrain } from '@/lib/db/brain';
 
-import { Stat } from '@/components/shared/Stat';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/shared/Card';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 
 import { ClientHero } from '@/components/client/ClientHero';
+import { MomentumPanel } from '@/components/client/MomentumPanel';
 import { BrainTabs } from '@/components/client/BrainTabs';
 import { DeliverableBoard } from '@/components/client/DeliverableBoard';
 import { ContactList } from '@/components/client/ContactList';
@@ -42,31 +39,7 @@ export default async function ClientPage({ params }: { params: { id: string } })
     <div className="space-y-6">
       <ClientHero client={client} lastCallDate={stats.lastCallDate} />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat
-          label="Goals"
-          value={stats.goals}
-          icon={<Target className="h-3.5 w-3.5" />}
-        />
-        <Stat
-          label="Open concerns"
-          value={stats.openConcerns}
-          icon={<AlertTriangle className="h-3.5 w-3.5" />}
-          accent={stats.openConcerns ? 'yellow' : 'default'}
-        />
-        <Stat
-          label="We owe"
-          value={stats.ourPending}
-          icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-          accent={stats.ourPending ? 'blue' : 'default'}
-        />
-        <Stat
-          label="They owe"
-          value={stats.theirPending}
-          icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-          accent={stats.theirPending ? 'blue' : 'default'}
-        />
-      </div>
+      <MomentumPanel stats={stats} brain={brain} wins={brain.wins?.length ?? 0} />
 
       <BrainTabs
         panels={{
@@ -223,42 +196,6 @@ function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle icon={<Flag className="h-3.5 w-3.5 text-accent" />}>
-              Goals & Success Metric
-            </CardTitle>
-          </CardHeader>
-          <CardBody className="space-y-4 text-[13px]">
-            {brain.success_metric && (
-              <div className="rounded-lg border border-accent/20 bg-accent-soft px-3.5 py-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">
-                  Success metric
-                </div>
-                <div className="mt-1 text-text">{brain.success_metric}</div>
-              </div>
-            )}
-            {goals.length > 0 ? (
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-                  Client goals
-                </div>
-                <ul className="mt-2 space-y-1.5">
-                  {goals.map((g, i) => (
-                    <li key={i} className="flex items-start gap-2.5">
-                      <span className="mt-[3px] inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-[9px] font-semibold text-text-muted">
-                        {i + 1}
-                      </span>
-                      <span className="text-text">{g}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              !brain.success_metric && <EmptyState title="No goals captured yet." />
-            )}
-          </CardBody>
-        </Card>
       </div>
 
       <div className="space-y-4">
@@ -275,6 +212,43 @@ function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string
             </div>
           </div>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle icon={<Flag className="h-3.5 w-3.5 text-accent" />}>
+              Goals & Success Metric
+            </CardTitle>
+          </CardHeader>
+          <CardBody className="space-y-3 text-[13px]">
+            {brain.success_metric && (
+              <div className="rounded-lg border border-accent/20 bg-accent-soft px-3 py-2.5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-accent">
+                  Success metric
+                </div>
+                <div className="mt-1 text-text">{brain.success_metric}</div>
+              </div>
+            )}
+            {goals.length > 0 ? (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                  Client goals
+                </div>
+                <ul className="mt-2 space-y-1.5">
+                  {goals.map((g, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="mt-[3px] inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-[9px] font-semibold text-text-muted">
+                        {i + 1}
+                      </span>
+                      <span className="text-text">{g}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              !brain.success_metric && <EmptyState title="No goals captured yet." />
+            )}
+          </CardBody>
+        </Card>
       </div>
     </div>
   );

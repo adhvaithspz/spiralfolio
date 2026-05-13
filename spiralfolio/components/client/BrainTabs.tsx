@@ -31,7 +31,7 @@ export function BrainTabs({
             className={cn(
               'group relative inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium tracking-wide transition',
               'text-text-muted hover:text-text',
-              'data-[state=active]:bg-surface-2 data-[state=active]:text-text data-[state=active]:shadow-[inset_0_0_0_1px_rgba(99,102,241,0.35)]',
+              'data-[state=active]:bg-surface-2 data-[state=active]:text-text data-[state=active]:shadow-[inset_0_0_0_1px_rgba(99,102,241,0.35)]'
             )}>
             <span className="opacity-70 transition group-data-[state=active]:opacity-100 group-data-[state=active]:text-accent">
               {t.icon}
