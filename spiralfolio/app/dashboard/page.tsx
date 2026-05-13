@@ -23,26 +23,21 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <PortfolioHeader kpis={kpis} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-5">
-          <HealthDistributionBar dist={distribution} />
-        </div>
-        <div className="lg:col-span-7">
-          <NeedsAttention items={attention} />
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <section className="space-y-3 xl:col-span-8">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.16em] text-text-dim">
-              All Clients
-            </h2>
-            <span className="text-[11px] text-text-muted">{items.length} total</span>
-          </div>
-          <ClientList items={items} />
-        </section>
-        <aside className="xl:col-span-4">
+        <div className="space-y-4 xl:col-span-8">
+          <HealthDistributionBar dist={distribution} />
+          <section className="space-y-3">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.16em] text-text-dim">
+                All Clients
+              </h2>
+              <span className="text-[11px] text-text-muted">{items.length} total</span>
+            </div>
+            <ClientList items={items} />
+          </section>
+        </div>
+        <aside className="space-y-4 xl:col-span-4">
+          <NeedsAttention items={attention} />
           <RecentActivity items={recentActivity} />
         </aside>
       </div>
