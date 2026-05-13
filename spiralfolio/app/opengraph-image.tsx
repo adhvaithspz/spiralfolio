@@ -100,6 +100,8 @@ export default function OpenGraphImage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div
             style={{
+              display: 'flex',
+              flexDirection: 'column',
               fontSize: 78,
               lineHeight: 1.05,
               fontWeight: 700,
@@ -107,9 +109,8 @@ export default function OpenGraphImage() {
               color: '#f4f4f5',
               maxWidth: 980,
             }}>
-            One brain per client.
-            <br />
-            Every signal, in one place.
+            <span>One brain per client.</span>
+            <span>Every signal, in one place.</span>
           </div>
           <div
             style={{
