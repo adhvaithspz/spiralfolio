@@ -3,14 +3,13 @@
 import * as Tabs from '@radix-ui/react-tabs';
 import { cn } from '@/lib/utils';
 
-export type BrainTabKey = 'overview' | 'deliverables' | 'contacts' | 'calls' | 'icp' | 'documents';
+export type BrainTabKey = 'overview' | 'deliverables' | 'contacts' | 'calls' | 'documents';
 
 const TABS: { key: BrainTabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'deliverables', label: 'Deliverables' },
   { key: 'contacts', label: 'Contacts' },
   { key: 'calls', label: 'Call Log' },
-  { key: 'icp', label: 'ICP Profile' },
   { key: 'documents', label: 'Documents' },
 ];
 

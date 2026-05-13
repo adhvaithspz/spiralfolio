@@ -1,5 +1,5 @@
 import 'server-only';
-import { asc, desc, eq } from 'drizzle-orm';
+import { asc, count, desc, eq, max, ne } from 'drizzle-orm';
 import { db } from './index';
 import {
   calls,
@@ -10,7 +10,6 @@ import {
   deliverables,
   documents,
   goals,
-  icpProfile,
   wins,
   type Call,
   type Client,
@@ -26,7 +25,6 @@ import {
   type BrainContact,
   type BrainDeliverable,
   type BrainDocumentRef,
-  type BrainICP,
   type ClientBrain,
 } from './brain';
 import { safeParse } from '@/lib/utils/json';
@@ -70,10 +68,6 @@ export async function listWins(clientId: string) {
   return db.select().from(wins).where(eq(wins.clientId, clientId)).orderBy(desc(wins.wonAt));
 }
 
-export async function getIcpProfile(clientId: string) {
-  const [row] = await db.select().from(icpProfile).where(eq(icpProfile.clientId, clientId)).limit(1);
-  return row;
-}
 
 export async function listDocuments(clientId: string): Promise<Document[]> {
   return db
@@ -138,48 +132,34 @@ function toBrainCallEntry(c: Call): BrainCallLogEntry {
   };
 }
 
-function toBrainIcp(row: Awaited<ReturnType<typeof getIcpProfile>>): BrainICP {
-  if (!row) return {};
-  return {
-    primary: row.primarySegment ?? undefined,
-    secondary: row.secondarySegment ?? undefined,
-    key_motivators: safeParse<string[]>(row.motivators ?? '[]', []),
-    key_objections: safeParse<string[]>(row.objections ?? '[]', []),
-    demographic_signals: safeParse<{ signal: string; confirmed?: boolean }[]>(
-      row.demographicSignals ?? '[]',
-      []
-    ),
-  };
-}
 
 // ─── Aggregate read: assemble the full ClientBrain from joined tables ────────
 
 export async function getClientBrain(clientId: string): Promise<ClientBrain> {
-  const c = await getClient(clientId);
-  if (!c) return EMPTY_BRAIN;
-
-  // Fetch all child tables in parallel
+  // Parallelise getClient alongside all child queries — no serial hop.
   const [
+    c,
     goalRows,
     allContacts,
     allConcerns,
     allDeliverables,
     decisionRows,
     winRows,
-    icpRow,
     docRows,
     callRows,
   ] = await Promise.all([
+    getClient(clientId),
     listGoals(clientId),
     listContacts(clientId),
     listConcerns(clientId),
     listDeliverables(clientId),
     listDecisions(clientId),
     listWins(clientId),
-    getIcpProfile(clientId),
     listDocuments(clientId),
     listCalls(clientId),
   ]);
+
+  if (!c) return EMPTY_BRAIN;
 
   const lastCallRow = callRows[0];
   const lastUpdated = c.updatedAt ?? c.createdAt ?? null;
@@ -201,7 +181,6 @@ export async function getClientBrain(clientId: string): Promise<ClientBrain> {
     client_deliverables: allDeliverables.filter(d => d.side === 'client').map(toBrainDeliverable),
     decisions_made: decisionRows.map(d => d.text),
     wins: winRows.map(w => w.text),
-    icp_notes: toBrainIcp(icpRow),
     documents: docRows.map(toBrainDocument),
     call_log: callRows.map(toBrainCallEntry),
   };
@@ -255,4 +234,41 @@ export async function listBlockingConcerns(clientId: string) {
 export async function listCallsSafe(clientId: string): Promise<Call[]> {
   const rows = await listCalls(clientId);
   return rows.map(c => ({ ...c, coachingDoc: null }));
+}
+
+/**
+ * Single-shot dashboard load: 3 HTTP requests instead of 1 + (N × 10).
+ * Fetches all clients, then aggregates open-concern counts and latest call
+ * dates in two parallel GROUP BY queries — no per-client round trips.
+ */
+export async function getDashboardData(): Promise<
+  Array<{ client: Client; stats: import('@/lib/brain-stats').BrainStats }>
+> {
+  const [allClients, concernCounts, lastCalls] = await Promise.all([
+    db.select().from(clients).orderBy(desc(clients.updatedAt)),
+    db
+      .select({ clientId: concerns.clientId, n: count() })
+      .from(concerns)
+      .where(ne(concerns.status, 'resolved'))
+      .groupBy(concerns.clientId),
+    db
+      .select({ clientId: calls.clientId, lastDate: max(calls.callDate) })
+      .from(calls)
+      .groupBy(calls.clientId),
+  ]);
+
+  const concernMap = new Map(concernCounts.map(r => [r.clientId, r.n]));
+  const callMap = new Map(lastCalls.map(r => [r.clientId, r.lastDate ?? null]));
+
+  return allClients.map(client => ({
+    client,
+    stats: {
+      goals: 0,
+      openConcerns: concernMap.get(client.id) ?? 0,
+      ourPending: 0,
+      theirPending: 0,
+      callCount: 0,
+      lastCallDate: callMap.get(client.id) ?? null,
+    },
+  }));
 }

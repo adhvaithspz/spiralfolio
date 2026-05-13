@@ -17,7 +17,6 @@ import { BrainTabs } from '@/components/client/BrainTabs';
 import { DeliverableBoard } from '@/components/client/DeliverableBoard';
 import { ContactList } from '@/components/client/ContactList';
 import { CallTimeline } from '@/components/client/CallTimeline';
-import { ICPPanel } from '@/components/client/ICPPanel';
 import { DocumentsPanel } from '@/components/client/DocumentsPanel';
 import { QuickBriefing } from '@/components/client/QuickBriefing';
 import { TranscriptUploader } from '@/components/calls/TranscriptUploader';
@@ -91,11 +90,10 @@ export default async function ClientPage({ params }: { params: { id: string } })
           contacts: (
             <ContactList
               clientContacts={brain.client_contacts ?? []}
-              internalTeam={brain.internal_team ?? buildInternalFallback(client.pmName, client.adName)}
+              internalTeam={buildInternalTeam(client.pmName, client.adName, brain.internal_team ?? [])}
             />
           ),
           calls: <CallTimeline entries={brain.call_log ?? []} />,
-          icp: <ICPPanel icp={brain.icp_notes ?? {}} />,
           documents: (
             <DocumentsPanel
               clientId={client.id}
@@ -109,11 +107,16 @@ export default async function ClientPage({ params }: { params: { id: string } })
   );
 }
 
-function buildInternalFallback(pm: string | null, ad: string | null) {
-  const out = [];
-  if (pm) out.push({ name: pm, role: 'PM' });
-  if (ad) out.push({ name: ad, role: 'AD' });
-  return out;
+function buildInternalTeam(
+  pm: string | null,
+  ad: string | null,
+  existing: import('@/lib/db/brain').BrainContact[],
+) {
+  const names = new Set(existing.map(c => c.name.toLowerCase()));
+  const pinned: import('@/lib/db/brain').BrainContact[] = [];
+  if (pm && !names.has(pm.toLowerCase())) pinned.push({ name: pm, role: 'PM' });
+  if (ad && !names.has(ad.toLowerCase())) pinned.push({ name: ad, role: 'AD' });
+  return [...pinned, ...existing];
 }
 
 function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string }) {

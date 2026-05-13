@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 
 /**
  * The "client" entity is the unit of work. Each row represents one ongoing
@@ -15,8 +15,6 @@ export const clients = sqliteTable('clients', {
   adName: text('ad_name'),
   status: text('status').default('on-track'), // on-track | at-risk | blocked | complete
   successMetric: text('success_metric'),
-  slackChannelId: text('slack_channel_id'),
-  asanaProjectId: text('asana_project_id'),
   driveFolderUrl: text('drive_folder_url'),
   createdAt: integer('created_at', { mode: 'timestamp' }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
@@ -91,21 +89,6 @@ export const wins = sqliteTable('wins', {
   wonAt: integer('won_at', { mode: 'timestamp' }),
 });
 
-export const icpProfile = sqliteTable(
-  'icp_profile',
-  {
-    clientId: text('client_id')
-      .notNull()
-      .references(() => clients.id, { onDelete: 'cascade' }),
-    primarySegment: text('primary_segment'),
-    secondarySegment: text('secondary_segment'),
-    motivators: text('motivators').default('[]'), // JSON string[]
-    objections: text('objections').default('[]'), // JSON string[]
-    demographicSignals: text('demographic_signals').default('[]'), // JSON {signal,confirmed}[]
-    updatedAt: integer('updated_at', { mode: 'timestamp' }),
-  },
-  t => ({ pk: primaryKey({ columns: [t.clientId] }) })
-);
 
 export const documents = sqliteTable('documents', {
   id: text('id').primaryKey(),
@@ -154,7 +137,6 @@ export type Concern = typeof concerns.$inferSelect;
 export type Deliverable = typeof deliverables.$inferSelect;
 export type Decision = typeof decisions.$inferSelect;
 export type Win = typeof wins.$inferSelect;
-export type IcpProfile = typeof icpProfile.$inferSelect;
 export type Document = typeof documents.$inferSelect;
 export type NewDocument = typeof documents.$inferInsert;
 export type Call = typeof calls.$inferSelect;
