@@ -395,8 +395,11 @@ function sendTranscriptAsThread(channelId, parentTs, transcript, meetingTopic, s
  * @param {string}  meetingTopic  - Meeting title
  * @param {string}  docUrl        - Google Doc link (shown as button)
  * @param {string}  transcript    - Raw transcript (pass null to skip threading)
+ * @param {Object}  [ctx]         - Optional context for SpiralFolio event log:
+ *                                  { clientName, meetingId, docUrl }
  */
-function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate) {
+function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate, ctx) {
+  ctx = ctx || {};
   var slackToken = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
   if (!slackToken) {
     Logger.log('⚠️ SLACK_BOT_TOKEN not set — skipping DMs');
@@ -454,6 +457,19 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate)
     if (hasNoCoaching || !content) {
       Logger.log('  ⏭️  SKIPPED  ' + name + ' — no attributable coaching content this call');
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: 'DM skipped: no coaching content for "' + name + '"' });
+      logSpiralFolioEvent({
+        eventType:        'slack_dm_skipped',
+        source:           'appscript',
+        severity:         'info',
+        message:          'No attributable coaching content for ' + name,
+        meetingId:        ctx.meetingId || null,
+        meetingTopic:     meetingTopic,
+        clientName:       ctx.clientName || null,
+        callDate:         callDate || null,
+        docUrl:           ctx.docUrl || null,
+        slackRecipient:   name,
+        payload:          { reason: 'no_attributable_coaching_content' },
+      });
       skipped++;
       return;
     }
@@ -470,6 +486,19 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate)
     if (!handleEntry || !handleEntry.email) {
       Logger.log('  ⚠️  SKIPPED  ' + name + ' — no Slack handle configured');
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: 'DM skipped: no handle for "' + name + '"' });
+      logSpiralFolioEvent({
+        eventType:      'slack_dm_skipped',
+        source:         'appscript',
+        severity:       'warning',
+        message:        'No Slack handle configured for ' + name,
+        meetingId:      ctx.meetingId || null,
+        meetingTopic:   meetingTopic,
+        clientName:     ctx.clientName || null,
+        callDate:       callDate || null,
+        docUrl:         ctx.docUrl || null,
+        slackRecipient: name,
+        payload:        { reason: 'no_handle_configured' },
+      });
       skipped++;
       return;
     }
@@ -478,6 +507,20 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate)
     if (!userId) {
       Logger.log('  ❌  FAILED   ' + name + ' (' + handleEntry.email + ') — Slack user not found');
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed: user not found for ' + handleEntry.email });
+      logSpiralFolioEvent({
+        eventType:           'slack_dm_failed',
+        source:              'appscript',
+        severity:            'warning',
+        message:             'Slack user not found for ' + handleEntry.email,
+        meetingId:           ctx.meetingId || null,
+        meetingTopic:        meetingTopic,
+        clientName:          ctx.clientName || null,
+        callDate:            callDate || null,
+        docUrl:              ctx.docUrl || null,
+        slackRecipient:      name,
+        slackRecipientEmail: handleEntry.email,
+        payload:             { reason: 'user_not_found' },
+      });
       failed++;
       return;
     }
@@ -486,6 +529,20 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate)
     if (!channelId) {
       Logger.log('  ❌  FAILED   ' + name + ' (' + handleEntry.email + ') — could not open DM channel');
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed: could not open channel for ' + name });
+      logSpiralFolioEvent({
+        eventType:           'slack_dm_failed',
+        source:              'appscript',
+        severity:            'warning',
+        message:             'Could not open DM channel for ' + name + ' (' + handleEntry.email + ')',
+        meetingId:           ctx.meetingId || null,
+        meetingTopic:        meetingTopic,
+        clientName:          ctx.clientName || null,
+        callDate:            callDate || null,
+        docUrl:              ctx.docUrl || null,
+        slackRecipient:      name,
+        slackRecipientEmail: handleEntry.email,
+        payload:             { reason: 'channel_open_failed' },
+      });
       failed++;
       return;
     }
@@ -506,10 +563,42 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate)
         Logger.log('  ✅  SENT     ' + name + ' — coaching DM only');
       }
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: '✅ DM sent to ' + name });
+      logSpiralFolioEvent({
+        eventType:           'slack_dm_sent',
+        source:              'appscript',
+        severity:            'success',
+        message:             'Coaching DM sent to ' + name + ' (' + handleEntry.email + ')',
+        meetingId:           ctx.meetingId || null,
+        meetingTopic:        meetingTopic,
+        clientName:          ctx.clientName || null,
+        callDate:            callDate || null,
+        docUrl:              ctx.docUrl || null,
+        slackRecipient:      name,
+        slackRecipientEmail: handleEntry.email,
+        slackChannelId:      channelId,
+        slackTs:             parentTs,
+        slackMessage:        content,
+        payload:             { transcriptThreaded: !!(transcript && transcript.trim()) },
+      });
       sent++;
     } else {
       Logger.log('  ❌  FAILED   ' + name + ' (' + handleEntry.email + ') — postMessage error');
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed for ' + name });
+      logSpiralFolioEvent({
+        eventType:           'slack_dm_failed',
+        source:              'appscript',
+        severity:            'error',
+        message:             'chat.postMessage failed for ' + name + ' (' + handleEntry.email + ')',
+        meetingId:           ctx.meetingId || null,
+        meetingTopic:        meetingTopic,
+        clientName:          ctx.clientName || null,
+        callDate:            callDate || null,
+        docUrl:              ctx.docUrl || null,
+        slackRecipient:      name,
+        slackRecipientEmail: handleEntry.email,
+        slackChannelId:      channelId,
+        payload:             { reason: 'postMessage_failed' },
+      });
       failed++;
     }
 

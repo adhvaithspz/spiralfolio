@@ -44,6 +44,31 @@ function doPost(e) {
         error:        'Webhook received via Cloudflare: ' + event
       });
 
+      // Mirror to SpiralFolio admin event log. We log this as a
+      // `cloudflare_webhook_received` event since the payload reaches us
+      // exclusively through the Cloudflare worker — the Apps Script web app
+      // is never called directly by Zoom.
+      logSpiralFolioEvent({
+        eventType:    'cloudflare_webhook_received',
+        source:       'cloudflare',
+        severity:     'info',
+        message:      'Zoom ' + event + ' forwarded by Cloudflare worker — host: ' + hostEmail,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     object.start_time || null,
+        payload:      { event: event, hostEmail: hostEmail },
+      });
+      logSpiralFolioEvent({
+        eventType:    'zoom_webhook_received',
+        source:       'appscript',
+        severity:     'info',
+        message:      'Zoom event "' + event + '" received for ' + meetingTopic,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     object.start_time || null,
+        payload:      { event: event, hostEmail: hostEmail },
+      });
+
       Logger.log('PM_AD_EMAILS count: ' + PM_AD_EMAILS.length);
       Logger.log('Host email: ' + hostEmail);
       Logger.log('Host is PM/AD: ' + PM_AD_EMAILS.some(function(e) {
@@ -351,6 +376,16 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
     error:        'Processing meeting ID: ' + meetingId
   });
 
+  logSpiralFolioEvent({
+    eventType:    'appscript_processing_started',
+    source:       'appscript',
+    severity:     'info',
+    message:      'Apps Script started processing ' + meetingTopic,
+    meetingId:    meetingId,
+    meetingTopic: meetingTopic,
+    payload:      { hostEmail: hostEmail, callType: callType, forceExternal: forceExternal },
+  });
+
   try {
     const token = getZoomAccessToken();
 
@@ -459,8 +494,25 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       externalParticipants, futureContextSummary
     );
 
+    logSpiralFolioEvent({
+      eventType:    'coaching_doc_created',
+      source:       'appscript',
+      severity:     'success',
+      message:      'Coaching doc created for ' + clientName + ' (' + meetingTopic + ')',
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      clientName:   clientName,
+      callDate:     recording.start_time || null,
+      docUrl:       docUrl || null,
+      payload:      { pmName: pmName, adName: adName, callType: callType },
+    });
+
     if (CONFIG.ENABLE_SLACK_POSTING) {
-      sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, recording.start_time);
+      sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, recording.start_time, {
+        clientName: clientName,
+        meetingId:  meetingId,
+        docUrl:     docUrl,
+      });
     }
 
     // ── SpiralFolio brain update ────────────────────────────────
@@ -500,6 +552,24 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
     Logger.log('🎉 Coaching doc created successfully');
     Logger.log(docUrl);
 
+    logSpiralFolioEvent({
+      eventType:    'appscript_processing_completed',
+      source:       'appscript',
+      severity:     'success',
+      message:      'Apps Script finished processing ' + meetingTopic + ' in ' + duration.toFixed(1) + 's',
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      clientName:   clientName,
+      callDate:     recording.start_time || null,
+      docUrl:       docUrl || null,
+      payload:      {
+        durationSec:  duration,
+        pmName:       pmName,
+        adName:       adName,
+        callType:     callType,
+      },
+    });
+
     return { clientName, pmName, adName, docUrl, summary: futureContextSummary };
 
   } catch (error) {
@@ -509,6 +579,15 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       meetingTopic: meetingTopic,
       hostEmail:    hostEmail,
       error:        error.toString() + ' (after ' + duration.toFixed(1) + 's)'
+    });
+    logSpiralFolioEvent({
+      eventType:    'appscript_processing_error',
+      source:       'appscript',
+      severity:     'error',
+      message:      'Apps Script processing failed for ' + meetingTopic + ' — ' + error,
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      payload:      { error: String(error), durationSec: duration, hostEmail: hostEmail },
     });
     throw error;
   }

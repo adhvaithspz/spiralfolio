@@ -132,3 +132,71 @@ function postToSpiralFolio(opts) {
     Logger.log('[SpiralFolio] postToSpiralFolio error: ' + err);
   }
 }
+
+
+/**
+ * Fire-and-forget ingestion of a pipeline event into the SpiralFolio admin
+ * event log (the Operations Console at /admin in the Next.js app).
+ *
+ * If SPIRALFOLIO_BASE_URL is not configured, this no-ops silently. Errors
+ * are caught and logged but never thrown — the surrounding pipeline (Zoom
+ * processing, Slack DMs, etc.) must never break because logging failed.
+ *
+ * @param {Object} opts
+ * @param {string} opts.eventType                e.g. 'slack_dm_sent'
+ * @param {string} [opts.severity]               'info' | 'success' | 'warning' | 'error'
+ * @param {string} [opts.source]                 'appscript' (default) | 'cloudflare'
+ * @param {string} [opts.message]                Free-form summary line
+ * @param {string} [opts.clientName]             Resolved client name
+ * @param {string} [opts.clientId]               Pre-resolved SpiralFolio client_id
+ * @param {string} [opts.meetingId]              Zoom meeting ID
+ * @param {string} [opts.meetingTopic]
+ * @param {string} [opts.callDate]               ISO date string
+ * @param {string} [opts.docUrl]                 Coaching Google Doc URL
+ * @param {string} [opts.slackRecipient]         Display name
+ * @param {string} [opts.slackRecipientEmail]
+ * @param {string} [opts.slackMessage]           Full body of the DM (truncated server-side if huge)
+ * @param {string} [opts.slackChannelId]
+ * @param {string} [opts.slackTs]
+ * @param {*}      [opts.payload]                Anything extra; serialised as JSON
+ */
+function logSpiralFolioEvent(opts) {
+  var props   = PropertiesService.getScriptProperties();
+  var baseUrl = (props.getProperty('SPIRALFOLIO_BASE_URL') || '').trim().replace(/\/$/, '');
+  if (!baseUrl) return;
+  if (!opts || !opts.eventType) return;
+
+  var apiKey = props.getProperty('SPIRALFOLIO_API_KEY') || '';
+
+  var body = {
+    event_type:            opts.eventType,
+    source:                opts.source   || 'appscript',
+    severity:              opts.severity || 'info',
+    message:               opts.message  || null,
+    client_name:           opts.clientName || null,
+    client_id:             opts.clientId   || null,
+    meeting_id:            opts.meetingId   ? String(opts.meetingId) : null,
+    meeting_topic:         opts.meetingTopic || null,
+    call_date:             opts.callDate     || null,
+    doc_url:               opts.docUrl       || null,
+    slack_recipient:       opts.slackRecipient      || null,
+    slack_recipient_email: opts.slackRecipientEmail || null,
+    slack_message:         opts.slackMessage        || null,
+    slack_channel_id:      opts.slackChannelId      || null,
+    slack_ts:              opts.slackTs             || null,
+    payload:               opts.payload || null,
+    occurred_at:           new Date().toISOString(),
+  };
+
+  try {
+    UrlFetchApp.fetch(baseUrl + '/api/events/log', {
+      method:             'post',
+      contentType:        'application/json',
+      headers:            apiKey ? { Authorization: 'Bearer ' + apiKey } : {},
+      payload:            JSON.stringify(body),
+      muteHttpExceptions: true,
+    });
+  } catch (err) {
+    Logger.log('[SpiralFolio] logEvent error (' + opts.eventType + '): ' + err);
+  }
+}

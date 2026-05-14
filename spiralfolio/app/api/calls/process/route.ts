@@ -9,6 +9,7 @@ import { applyCallSynthesis } from '@/lib/db/mutations';
 import { safeStringify } from '@/lib/utils/json';
 import { synthesizeCall } from '@/lib/ai/synthesis';
 import { extractDocument } from '@/lib/ai/documents';
+import { logEvent } from '@/lib/db/events';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -75,6 +76,16 @@ export async function POST(req: Request) {
     .limit(1);
 
   if (duplicate && duplicate.status !== 'error') {
+    await logEvent({
+      eventType: 'transcript_uploaded',
+      severity: 'warning',
+      message: `Duplicate transcript ignored — call already exists for ${client.name} on ${callDate} (${callType})`,
+      clientId,
+      clientName: client.name,
+      callId: duplicate.id,
+      callDate,
+      payload: { duplicate: true, filename, transcriptLength: transcript.length },
+    });
     return NextResponse.json(
       { error: 'duplicate_call', call_id: duplicate.id, message: 'A call with this date and type already exists for this client.' },
       { status: 409 }
@@ -91,6 +102,21 @@ export async function POST(req: Request) {
     rawTranscript: transcript,
     status: 'processing',
     createdAt: now,
+  });
+
+  await logEvent({
+    eventType: 'transcript_uploaded',
+    severity: 'info',
+    message: `Transcript received for ${client.name} (${callType}, ${callDate})`,
+    clientId,
+    clientName: client.name,
+    callId,
+    callDate,
+    payload: {
+      filename,
+      transcriptLength: transcript.length,
+      contentType: contentType || 'application/json',
+    },
   });
 
   try {
@@ -135,22 +161,86 @@ export async function POST(req: Request) {
       brainSnapshot: safeStringify(updatedBrain),
     }).where(eq(calls.id, callId));
 
+    const changesSummary = {
+      new_contacts: changes.contactsAdded,
+      new_concerns: changes.concernsAdded,
+      resolved_concerns: changes.concernsResolved,
+      new_deliverables: changes.deliverablesAdded,
+      updated_deliverables: changes.deliverablesUpdated,
+      decisions_made: changes.decisionsAdded,
+      wins: changes.winsAdded,
+    };
+
+    const changeCount = Object.values(changesSummary).reduce((a, b) => a + b, 0);
+
+    await logEvent({
+      eventType: 'call_imported',
+      severity: 'success',
+      message: `Imported ${callType} call for ${client.name} (${callDate})`,
+      clientId,
+      clientName: client.name,
+      callId,
+      callDate,
+      payload: {
+        callSummary: synthesis.call_summary,
+        attendeesClient: synthesis.attendees_client,
+        attendeesInternal: synthesis.attendees_internal,
+        documentsExtracted: docExtraction ? 1 : 0,
+        durationMs: Date.now() - now.getTime(),
+      },
+    });
+
+    if (changeCount > 0) {
+      await logEvent({
+        eventType: 'brain_changed',
+        severity: 'info',
+        message: `Brain updated for ${client.name}: ${describeChanges(changesSummary)}`,
+        clientId,
+        clientName: client.name,
+        callId,
+        callDate,
+        payload: changesSummary,
+      });
+    }
+
     return NextResponse.json({
       call_id: callId,
       updated_brain: updatedBrain,
       call_summary: synthesis.call_summary,
-      changes_summary: {
-        new_contacts: changes.contactsAdded,
-        new_concerns: changes.concernsAdded,
-        resolved_concerns: changes.concernsResolved,
-        new_deliverables: changes.deliverablesAdded,
-        updated_deliverables: changes.deliverablesUpdated,
-        decisions_made: changes.decisionsAdded,
-        wins: changes.winsAdded,
-      },
+      changes_summary: changesSummary,
     });
   } catch (err) {
     await db.update(calls).set({ status: 'error' }).where(eq(calls.id, callId));
+    await logEvent({
+      eventType: 'call_processing_error',
+      severity: 'error',
+      message: `Processing failed for ${client.name} (${callDate}): ${(err as Error).message}`,
+      clientId,
+      clientName: client.name,
+      callId,
+      callDate,
+      payload: { error: (err as Error).message, stack: (err as Error).stack ?? null },
+    });
     return NextResponse.json({ error: (err as Error).message, call_id: callId }, { status: 500 });
   }
+}
+
+function describeChanges(c: {
+  new_contacts: number;
+  new_concerns: number;
+  resolved_concerns: number;
+  new_deliverables: number;
+  updated_deliverables: number;
+  decisions_made: number;
+  wins: number;
+}): string {
+  const parts: string[] = [];
+  if (c.new_contacts) parts.push(`${c.new_contacts} contact${c.new_contacts === 1 ? '' : 's'}`);
+  if (c.new_concerns) parts.push(`${c.new_concerns} new concern${c.new_concerns === 1 ? '' : 's'}`);
+  if (c.resolved_concerns) parts.push(`${c.resolved_concerns} resolved`);
+  if (c.new_deliverables) parts.push(`${c.new_deliverables} new deliverable${c.new_deliverables === 1 ? '' : 's'}`);
+  if (c.updated_deliverables) parts.push(`${c.updated_deliverables} deliverable update${c.updated_deliverables === 1 ? '' : 's'}`);
+  if (c.decisions_made) parts.push(`${c.decisions_made} decision${c.decisions_made === 1 ? '' : 's'}`);
+  if (c.wins) parts.push(`${c.wins} win${c.wins === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(', ') : 'no changes';
 }

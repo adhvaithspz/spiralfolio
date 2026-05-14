@@ -13,8 +13,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-bg text-text">
-        <header className="sticky top-0 z-30 border-b border-border bg-bg/70 backdrop-blur-xl">
-          <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between px-6">
+        <header className="sticky top-0 z-30 w-full border-b border-border-strong bg-surface/85 shadow-[0_1px_0_0_rgba(0,0,0,0.4)] backdrop-blur-xl">
+          <div className="flex h-14 w-full items-center justify-between px-6 lg:px-8">
             <Link href="/dashboard" className="group flex items-center gap-2.5">
               <div className="relative h-7 w-7 overflow-hidden rounded-lg bg-gradient-to-br from-[#6366f1] via-[#7c5cf3] to-[#7c3aed] shadow-glow-soft transition group-hover:shadow-glow">
                 <span
@@ -42,6 +42,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 href="/dashboard"
                 className="rounded-md px-3 py-1.5 text-text-dim transition hover:bg-surface hover:text-text">
                 Dashboard
+              </Link>
+              <Link
+                href="/admin"
+                className="rounded-md px-3 py-1.5 text-text-dim transition hover:bg-surface hover:text-text">
+                Admin
               </Link>
             </nav>
           </div>

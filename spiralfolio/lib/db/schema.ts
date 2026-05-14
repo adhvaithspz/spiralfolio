@@ -129,6 +129,47 @@ export const users = sqliteTable('users', {
   createdAt: integer('created_at', { mode: 'timestamp' }),
 });
 
+/**
+ * Append-only audit/operations log. Every interesting thing that happens in
+ * the call-coaching pipeline writes one row here so the admin dashboard can
+ * show end-to-end timelines (Zoom webhook → Cloudflare → Apps Script →
+ * coaching doc → Slack DMs → SpiralFolio brain update).
+ *
+ * Rows are written from three sources:
+ *   - `spiralfolio` : the Next.js app itself (call ingestion, brain mutations)
+ *   - `appscript`   : the Google Apps Script pipeline (doPost, doc creation,
+ *                     Slack DM dispatch). Posted to `/api/events/log`.
+ *   - `cloudflare`  : the Zoom webhook proxy worker (optional — the Apps
+ *                     Script also logs `cloudflare_webhook_received` as a
+ *                     fallback signal whenever it receives a forwarded event).
+ */
+export const eventLogs = sqliteTable('event_logs', {
+  id: text('id').primaryKey(),
+  eventType: text('event_type').notNull(),
+  source: text('source').notNull().default('spiralfolio'), // spiralfolio | appscript | cloudflare | manual
+  severity: text('severity').notNull().default('info'), // info | success | warning | error
+  message: text('message'),
+
+  clientId: text('client_id'),
+  clientName: text('client_name'),
+
+  meetingId: text('meeting_id'),
+  meetingTopic: text('meeting_topic'),
+  callId: text('call_id'),
+  callDate: text('call_date'),
+
+  docUrl: text('doc_url'),
+
+  slackRecipient: text('slack_recipient'),
+  slackRecipientEmail: text('slack_recipient_email'),
+  slackMessage: text('slack_message'),
+  slackChannelId: text('slack_channel_id'),
+  slackTs: text('slack_ts'),
+
+  payload: text('payload'), // arbitrary JSON for anything not captured above
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
 export type Client = typeof clients.$inferSelect;
 export type NewClient = typeof clients.$inferInsert;
 export type Goal = typeof goals.$inferSelect;
@@ -142,6 +183,8 @@ export type NewDocument = typeof documents.$inferInsert;
 export type Call = typeof calls.$inferSelect;
 export type NewCall = typeof calls.$inferInsert;
 export type User = typeof users.$inferSelect;
+export type EventLog = typeof eventLogs.$inferSelect;
+export type NewEventLog = typeof eventLogs.$inferInsert;
 
 export type ClientStatus = 'on-track' | 'at-risk' | 'blocked' | 'complete';
 export type CallType = 'kickoff' | 'weekly' | 'ad-hoc' | 'review';
@@ -151,3 +194,31 @@ export type DeliverableStatus = 'in-progress' | 'pending' | 'blocked' | 'done';
 export type DeliverableSide = 'us' | 'client';
 export type ContactSide = 'client' | 'internal';
 export type UserRole = 'admin' | 'pm' | 'ad' | 'stakeholder';
+
+export type EventSource = 'spiralfolio' | 'appscript' | 'cloudflare' | 'manual';
+export type EventSeverity = 'info' | 'success' | 'warning' | 'error';
+
+/**
+ * Canonical event types written to `event_logs`. Free-form strings are
+ * permitted at the column level (so the Apps Script can add new types
+ * without a schema migration), but the dashboard knows about these.
+ */
+export const KNOWN_EVENT_TYPES = [
+  'cloudflare_webhook_received',
+  'zoom_webhook_received',
+  'appscript_processing_started',
+  'appscript_processing_completed',
+  'appscript_processing_skipped',
+  'appscript_processing_error',
+  'coaching_doc_created',
+  'slack_dm_sent',
+  'slack_dm_skipped',
+  'slack_dm_failed',
+  'transcript_uploaded',
+  'call_imported',
+  'brain_changed',
+  'call_processing_error',
+  'admin_login_succeeded',
+  'admin_login_failed',
+] as const;
+export type KnownEventType = (typeof KNOWN_EVENT_TYPES)[number];
