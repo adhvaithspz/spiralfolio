@@ -52,6 +52,22 @@ export async function middleware(req: NextRequest) {
   }
 
   if (!isGoogleSsoConfigured()) {
+    // In production, missing SSO config must NEVER fail open — that would
+    // expose the whole app. Block everything with a clear message and let
+    // the operator wire up env vars. In dev, allow through so the app is
+    // still usable before you've set up OAuth.
+    if (process.env.NODE_ENV === 'production') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { error: 'Google SSO is not configured on this deployment.' },
+          { status: 503 },
+        );
+      }
+      return new NextResponse(
+        'Google SSO is not configured on this deployment. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, NEXTAUTH_SECRET, and NEXTAUTH_URL in the Vercel project settings and redeploy.',
+        { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } },
+      );
+    }
     return NextResponse.next();
   }
 
