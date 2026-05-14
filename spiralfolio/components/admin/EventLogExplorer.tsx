@@ -29,9 +29,11 @@ import { EventRowBody } from './EventRow';
 import { AdminLogoutButton } from './AdminLogoutButton';
 import type { EventLog, EventSeverity, EventSource } from '@/lib/db/schema';
 import type { EventCountSummary } from '@/lib/db/events';
+import { EVENT_GROUP_IDS, EVENT_GROUP_META, type EventGroupId } from '@/lib/admin/event-filters';
 
 type Filters = {
   eventTypes: string[];
+  eventGroups: EventGroupId[];
   sources: EventSource[];
   severities: EventSeverity[];
   clientId: string;
@@ -45,6 +47,7 @@ const ALL_SOURCES: { value: EventSource; label: string }[] = [
   { value: 'appscript', label: 'Apps Script' },
   { value: 'spiralfolio', label: 'SpiralFolio' },
   { value: 'manual', label: 'Manual' },
+  { value: 'zoom', label: 'Zoom' },
 ];
 
 const ALL_SEVERITIES: { value: EventSeverity; label: string }[] = [
@@ -83,10 +86,16 @@ export function EventLogExplorer({
   const [grouping, setGrouping] = React.useState(true);
   const [draft, setDraft] = React.useState<Filters>(initialFilters);
 
-  const groups = React.useMemo(
-    () => (grouping ? groupRelatedEvents(rows) : rows.map(r => ({ primary: r, others: [] }))),
-    [rows, grouping],
-  );
+  const groups = React.useMemo(() => {
+    let base = grouping ? groupRelatedEvents(rows) : rows.map(r => ({ primary: r, others: [] as EventLog[] }));
+    if (initialFilters.eventGroups.length) {
+      base = mergeClustersSameMeetingForGroupFilter(base, initialFilters.eventGroups);
+    }
+    return base;
+  }, [rows, grouping, initialFilters.eventGroups]);
+
+  /** When a pipeline-group chip is applied, those matches should list as group shells only; expand for raw events. */
+  const useGroupFilterShell = initialFilters.eventGroups.length > 0;
 
   React.useEffect(() => {
     setRows(initialRows);
@@ -105,6 +114,7 @@ export function EventLogExplorer({
         else params.delete(key);
       };
       setOrDel('event_types', next.eventTypes.join(','));
+      setOrDel('event_groups', next.eventGroups.join(','));
       setOrDel('sources', next.sources.join(','));
       setOrDel('severities', next.severities.join(','));
       setOrDel('client_id', next.clientId);
@@ -169,8 +179,8 @@ export function EventLogExplorer({
   );
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div className="flex h-[calc(100dvh-6.5rem)] max-h-[calc(100dvh-6.5rem)] flex-col gap-5 overflow-hidden">
+      <header className="shrink-0 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.18em] text-text-muted">
             <Activity className="h-3.5 w-3.5" />
@@ -218,7 +228,8 @@ export function EventLogExplorer({
 
       <SummaryStrip summary={summary} />
 
-      <FilterPanel
+      <div className="shrink-0">
+        <FilterPanel
         draft={draft}
         setDraft={setDraft}
         knownEventTypes={knownEventTypes}
@@ -227,6 +238,7 @@ export function EventLogExplorer({
         onReset={() =>
           applyFilters({
             eventTypes: [],
+            eventGroups: [],
             sources: [],
             severities: [],
             clientId: '',
@@ -237,39 +249,46 @@ export function EventLogExplorer({
         }
         dirty={filtersDirty}
       />
+      </div>
 
-      <div className="rounded-xl border border-border surface-glass">
-        <div className="grid grid-cols-[150px_minmax(0,2fr)_minmax(0,1fr)_120px_120px] items-center gap-3 border-b border-border px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border surface-glass">
+        <div className="grid shrink-0 grid-cols-[150px_minmax(0,2fr)_minmax(0,1fr)_120px_120px] items-center gap-3 border-b border-border px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">
           <div>Time</div>
           <div>Event</div>
           <div>Client / Meeting</div>
           <div>Source</div>
           <div className="text-right">Status</div>
         </div>
-        {rows.length === 0 ? (
-          <div className="p-10">
-            <EmptyState
-              title="No events match those filters."
-              description="Trigger a Zoom webhook or upload a transcript to see entries appear here."
-            />
-          </div>
-        ) : (
-          <ol className="flex flex-col gap-2 p-2">
-            {groups.map(group =>
-              group.others.length === 0 ? (
-                <li
-                  key={group.primary.id}
-                  className="overflow-hidden rounded-lg border border-border/70 bg-surface/40 transition hover:border-border-strong">
-                  <EventRowBody row={group.primary} />
-                </li>
-              ) : (
-                <GroupedEventRow key={group.primary.id} group={group} />
-              ),
-            )}
-          </ol>
-        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {rows.length === 0 ? (
+            <div className="p-10">
+              <EmptyState
+                title="No events match those filters."
+                description="Trigger a Zoom webhook or upload a transcript to see entries appear here."
+              />
+            </div>
+          ) : (
+            <ol className="flex flex-col gap-2 p-2">
+              {groups.map(group => {
+                const shellForGroupFilter =
+                  useGroupFilterShell &&
+                  clusterOnlyContainsTypesFromSelectedGroups(group, initialFilters.eventGroups);
+                const showGroupedRow = shellForGroupFilter || group.others.length > 0;
+                return showGroupedRow ? (
+                  <GroupedEventRow key={group.primary.id} group={group} />
+                ) : (
+                  <li
+                    key={group.primary.id}
+                    className="overflow-hidden rounded-lg border border-border/70 bg-surface/40 transition hover:border-border-strong">
+                    <EventRowBody row={group.primary} />
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
         {cursor && (
-          <div className="flex items-center justify-center border-t border-border p-3">
+          <div className="flex shrink-0 items-center justify-center border-t border-border p-3">
             <Button variant="secondary" size="sm" onClick={loadMore} disabled={pending}>
               {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Load more
@@ -404,25 +423,75 @@ function FilterPanel({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
         <ChipGroup
           label="Source"
+          layout="scroll"
           options={ALL_SOURCES}
           selected={draft.sources}
           onToggle={v => setDraft(d => ({ ...d, sources: toggleArray(d.sources, v) }))}
         />
         <ChipGroup
           label="Status"
+          layout="scroll"
           options={ALL_SEVERITIES}
           selected={draft.severities}
           onToggle={v => setDraft(d => ({ ...d, severities: toggleArray(d.severities, v) }))}
         />
-        <ChipGroup
-          label="Event type"
-          options={knownEventTypes.map(t => ({ value: t, label: t }))}
-          selected={draft.eventTypes}
-          onToggle={v => setDraft(d => ({ ...d, eventTypes: toggleArray(d.eventTypes, v) }))}
-        />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+            Event type
+          </span>
+          <div className="-mx-1 max-w-full overflow-x-auto px-1 pb-1 scrollbar-subtle">
+            <div className="flex w-max flex-nowrap gap-1.5">
+              {EVENT_GROUP_IDS.map(id => {
+                const meta = EVENT_GROUP_META[id];
+                const active = draft.eventGroups.includes(id);
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() =>
+                      setDraft(d => ({
+                        ...d,
+                        eventGroups: toggleArray(d.eventGroups, id),
+                      }))
+                    }
+                    className={
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide transition ' +
+                      (active
+                        ? 'border-accent/60 bg-accent-soft text-accent'
+                        : 'border-border bg-surface-2 text-text-dim hover:border-border-strong hover:text-text')
+                    }>
+                    {meta.label}
+                  </button>
+                );
+              })}
+              {knownEventTypes.map(t => {
+                const active = draft.eventTypes.includes(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() =>
+                      setDraft(d => ({
+                        ...d,
+                        eventTypes: toggleArray(d.eventTypes, t),
+                      }))
+                    }
+                    className={
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition ' +
+                      (active
+                        ? 'border-accent/60 bg-accent-soft text-accent'
+                        : 'border-border bg-surface-2 text-text-dim hover:border-border-strong hover:text-text')
+                    }>
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2">
@@ -442,18 +511,27 @@ function ChipGroup<T extends string>({
   options,
   selected,
   onToggle,
+  layout = 'wrap',
 }: {
   label: string;
   options: { value: T; label: string }[];
   selected: T[];
   onToggle: (v: T) => void;
+  layout?: 'wrap' | 'scroll';
 }) {
+  const rowClass =
+    layout === 'scroll'
+      ? '-mx-1 flex max-w-full flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 scrollbar-subtle'
+      : 'flex flex-wrap gap-1.5';
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
-        {label}
-      </span>
-      <div className="flex flex-wrap gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {label ? (
+        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+          {label}
+        </span>
+      ) : null}
+      <div className={rowClass}>
         {options.length === 0 && (
           <span className="text-[12px] text-text-muted">— no values yet —</span>
         )}
@@ -465,7 +543,7 @@ function ChipGroup<T extends string>({
               type="button"
               onClick={() => onToggle(o.value)}
               className={
-                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition ' +
+                'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition ' +
                 (active
                   ? 'border-accent/60 bg-accent-soft text-accent'
                   : 'border-border bg-surface-2 text-text-dim hover:border-border-strong hover:text-text')
@@ -538,6 +616,71 @@ function groupRelatedEvents(rows: EventLog[]): EventGroup[] {
   return groups;
 }
 
+function typesInSelectedEventGroups(groupIds: EventGroupId[]): Set<string> {
+  const s = new Set<string>();
+  for (const id of groupIds) {
+    for (const t of EVENT_GROUP_META[id].types) s.add(t);
+  }
+  return s;
+}
+
+/** True when every event in the cluster is one of the types implied by the selected pipeline group chips. */
+function clusterOnlyContainsTypesFromSelectedGroups(
+  cluster: EventGroup,
+  selectedGroupIds: EventGroupId[],
+): boolean {
+  if (!selectedGroupIds.length) return false;
+  const allowed = typesInSelectedEventGroups(selectedGroupIds);
+  for (const e of [cluster.primary, ...cluster.others]) {
+    if (!allowed.has(e.eventType)) return false;
+  }
+  return true;
+}
+
+/**
+ * `groupRelatedEvents` only links rows within a short time window, so the same
+ * call can produce multiple islands (e.g. several skips minutes apart). When a
+ * pipeline group chip is active, merge every cluster that shares the same meeting
+ * key and only contains those groups' event types — expand then lists all rows.
+ */
+function mergeClustersSameMeetingForGroupFilter(
+  groups: EventGroup[],
+  selectedGroupIds: EventGroupId[],
+): EventGroup[] {
+  if (!selectedGroupIds.length) return groups;
+
+  const allowed = typesInSelectedEventGroups(selectedGroupIds);
+  const mergeableByKey = new Map<string, Map<string, EventLog>>();
+  const unmerged: EventGroup[] = [];
+
+  for (const g of groups) {
+    const all = [g.primary, ...g.others];
+    const key = meetingKey(g.primary);
+    const allAllowed = all.every(e => allowed.has(e.eventType));
+    if (key && allAllowed) {
+      let bucket = mergeableByKey.get(key);
+      if (!bucket) {
+        bucket = new Map();
+        mergeableByKey.set(key, bucket);
+      }
+      for (const e of all) {
+        bucket.set(e.id, e);
+      }
+    } else {
+      unmerged.push(g);
+    }
+  }
+
+  const merged: EventGroup[] = [];
+  for (const byId of mergeableByKey.values()) {
+    const events = [...byId.values()].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+    const [primary, ...others] = events;
+    if (primary) merged.push({ primary, others });
+  }
+
+  return [...merged, ...unmerged].sort((a, b) => toMs(b.primary.createdAt) - toMs(a.primary.createdAt));
+}
+
 const SEVERITY_RANK: Record<string, number> = { error: 4, warning: 3, success: 2, info: 1 };
 
 function dominantSeverity(events: EventLog[]): EventSeverity {
@@ -582,6 +725,7 @@ const SOURCE_BADGE: Record<EventSource, string> = {
   appscript: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
   spiralfolio: 'border-accent/30 bg-accent-soft text-accent',
   manual: 'border-border-strong bg-surface-2 text-text-dim',
+  zoom: 'border-cyan-500/35 bg-cyan-500/12 text-cyan-300',
 };
 
 /**
@@ -759,14 +903,21 @@ function GroupedEventRow({ group }: { group: EventGroup }) {
         </div>
 
         <div className="text-right">
-          <span
-            className={
-              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
-              sevStyle.chip
-            }>
-            {sevStyle.icon}
-            {sev}
-          </span>
+          {kind.title === 'Call Skipped' ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              <Slash className="h-3 w-3" />
+              Skipped
+            </span>
+          ) : (
+            <span
+              className={
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
+                sevStyle.chip
+              }>
+              {sevStyle.icon}
+              {sev}
+            </span>
+          )}
         </div>
       </button>
 

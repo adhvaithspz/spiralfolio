@@ -22,8 +22,8 @@ export function BrainTabs({
   panels: Record<BrainTabKey, React.ReactNode>;
 }) {
   return (
-    <Tabs.Root defaultValue={defaultTab} className="space-y-5">
-      <Tabs.List className="inline-flex w-full items-center gap-1 rounded-xl border border-border surface-glass p-1">
+    <Tabs.Root defaultValue={defaultTab} className="flex min-h-0 flex-1 flex-col gap-4">
+      <Tabs.List className="inline-flex w-full shrink-0 items-center gap-1 rounded-xl border border-border surface-glass p-1">
         {TABS.map(t => (
           <Tabs.Trigger
             key={t.key}
@@ -42,8 +42,11 @@ export function BrainTabs({
       </Tabs.List>
 
       {TABS.map(t => (
-        <Tabs.Content key={t.key} value={t.key} className="focus:outline-none animate-rise">
-          {panels[t.key]}
+        <Tabs.Content
+          key={t.key}
+          value={t.key}
+          className="animate-rise flex min-h-0 flex-1 flex-col overflow-hidden outline-none focus:outline-none data-[state=inactive]:hidden">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{panels[t.key]}</div>
         </Tabs.Content>
       ))}
     </Tabs.Root>

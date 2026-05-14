@@ -50,6 +50,7 @@ const SOURCE_STYLES: Record<EventSource, string> = {
   appscript: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
   spiralfolio: 'border-accent/30 bg-accent-soft text-accent',
   manual: 'border-border-strong bg-surface-2 text-text-dim',
+  zoom: 'border-cyan-500/35 bg-cyan-500/12 text-cyan-300',
 };
 
 function eventIcon(type: string) {

@@ -4,6 +4,8 @@ import { db } from './index';
 import { eventLogs, type EventLog, type EventSeverity, type EventSource } from './schema';
 import { nanoid } from '@/lib/utils/nanoid';
 import { safeStringify } from '@/lib/utils/json';
+import type { EventGroupId } from '@/lib/admin/event-filters';
+import { CALL_SKIPPED_UPSTREAM_EVENT_TYPES } from '@/lib/admin/event-filters';
 
 /**
  * Append-only audit log helper. Every interesting moment in the call-coaching
@@ -75,6 +77,10 @@ export async function logEvent(input: LogEventInput): Promise<string | null> {
 
 export type ListEventsFilters = {
   eventTypes?: string[];
+  /** Admin URL group chips — correlate expanded types (e.g. Zoom/CF with a skip) without listing every webhook. */
+  eventGroups?: EventGroupId[];
+  /** `event_types` param only; explicit type chips vs group expansion. */
+  eventTypesIndividual?: string[];
   sources?: EventSource[];
   severities?: EventSeverity[];
   clientId?: string;
@@ -105,6 +111,65 @@ function applyHiddenTypeFilter(conds: ReturnType<typeof eq>[]) {
   }
 }
 
+/** Pair Zoom/Cloudflare rows with a skip on the same call/meeting (±2h). Timestamps are ms (Drizzle sqlite `timestamp`). */
+const CALL_SKIP_UPSTREAM_CORRELATION_MS = 2 * 60 * 60 * 1000;
+
+function pushMergedEventTypeCondition(
+  conds: ReturnType<typeof eq>[],
+  mergedTypes: string[],
+  eventGroups: EventGroupId[] | undefined,
+  individualTypes: string[] | undefined,
+) {
+  const groups = eventGroups ?? [];
+  const indiv = new Set(individualTypes ?? []);
+  const upstreamList = CALL_SKIPPED_UPSTREAM_EVENT_TYPES as readonly string[];
+
+  const callSkippedPipeline =
+    groups.includes('call_skipped') && mergedTypes.some(t => upstreamList.includes(t));
+
+  if (!callSkippedPipeline) {
+    conds.push(sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})` as never);
+    return;
+  }
+
+  const upstreamGroupOnly = upstreamList.filter(t => mergedTypes.includes(t) && !indiv.has(t));
+  const simpleTypes = mergedTypes.filter(t => !upstreamGroupOnly.includes(t));
+
+  if (upstreamGroupOnly.length === 0) {
+    conds.push(sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})` as never);
+    return;
+  }
+
+  const upstreamIn = sql.join(upstreamGroupOnly.map(t => sql`${t}`), sql`, `);
+  const correlatedUpstream = and(
+    sql`${eventLogs.eventType} IN (${upstreamIn})`,
+    sql`EXISTS (
+      SELECT 1 FROM event_logs AS s
+      WHERE s.event_type = 'appscript_processing_skipped'
+      AND (
+        (${eventLogs.callId} IS NOT NULL AND ${eventLogs.callId} = s.call_id AND s.call_id IS NOT NULL)
+        OR (${eventLogs.meetingId} IS NOT NULL AND ${eventLogs.meetingId} = s.meeting_id AND s.meeting_id IS NOT NULL)
+        OR (
+          ${eventLogs.meetingTopic} IS NOT NULL AND s.meeting_topic IS NOT NULL
+          AND lower(trim(${eventLogs.meetingTopic})) = lower(trim(s.meeting_topic))
+        )
+      )
+      AND abs(cast(${eventLogs.createdAt} as integer) - cast(s.created_at as integer)) <= ${CALL_SKIP_UPSTREAM_CORRELATION_MS}
+    )`,
+  );
+
+  if (simpleTypes.length > 0) {
+    conds.push(
+      or(
+        sql`${eventLogs.eventType} IN (${sql.join(simpleTypes.map(t => sql`${t}`), sql`, `)})`,
+        correlatedUpstream,
+      ) as never,
+    );
+  } else {
+    conds.push(correlatedUpstream as never);
+  }
+}
+
 export async function listEvents(filters: ListEventsFilters = {}): Promise<ListEventsResult> {
   const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
@@ -112,7 +177,12 @@ export async function listEvents(filters: ListEventsFilters = {}): Promise<ListE
   applyHiddenTypeFilter(conds);
 
   if (filters.eventTypes && filters.eventTypes.length) {
-    conds.push(sql`${eventLogs.eventType} IN (${sql.join(filters.eventTypes.map(t => sql`${t}`), sql`, `)})` as never);
+    pushMergedEventTypeCondition(
+      conds,
+      filters.eventTypes,
+      filters.eventGroups,
+      filters.eventTypesIndividual,
+    );
   }
   if (filters.sources && filters.sources.length) {
     conds.push(sql`${eventLogs.source} IN (${sql.join(filters.sources.map(s => sql`${s}`), sql`, `)})` as never);
@@ -235,10 +305,12 @@ export async function summarizeEvents(filters: ListEventsFilters = {}): Promise<
     bySeverity[k] = Number(r.n);
   }
 
-  const bySource = { spiralfolio: 0, appscript: 0, cloudflare: 0, manual: 0 } as Record<EventSource, number>;
+  const bySource = { spiralfolio: 0, appscript: 0, cloudflare: 0, manual: 0, zoom: 0 } as Record<EventSource, number>;
+  const sourceKeys = new Set(Object.keys(bySource));
   for (const r of bySrc) {
-    const k = (r.source ?? 'spiralfolio') as EventSource;
-    bySource[k] = Number(r.n);
+    const raw = (r.source ?? 'spiralfolio') as string;
+    const k = (sourceKeys.has(raw) ? raw : 'spiralfolio') as EventSource;
+    bySource[k] += Number(r.n);
   }
 
   return {

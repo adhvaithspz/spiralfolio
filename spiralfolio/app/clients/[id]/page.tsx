@@ -8,11 +8,10 @@ import {
 
 import { getClient, getClientBrain } from '@/lib/db/queries';
 import { computeBrainStats } from '@/lib/brain-stats';
-import type { ClientBrain } from '@/lib/db/brain';
+import type { BrainDecision, BrainWin, ClientBrain } from '@/lib/db/brain';
 
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/shared/Card';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { StatusBadge } from '@/components/shared/StatusBadge';
 
 import { ClientHero } from '@/components/client/ClientHero';
 import { MomentumPanel } from '@/components/client/MomentumPanel';
@@ -21,7 +20,9 @@ import { DeliverableBoard } from '@/components/client/DeliverableBoard';
 import { ContactList } from '@/components/client/ContactList';
 import { CallTimeline } from '@/components/client/CallTimeline';
 import { DocumentsPanel } from '@/components/client/DocumentsPanel';
+import { OpenConcernRow } from '@/components/client/OpenConcernRow';
 import { QuickBriefing } from '@/components/client/QuickBriefing';
+import { CallGroupedEntries } from '@/components/client/CallGroupedEntries';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,36 +36,40 @@ export default async function ClientPage({ params }: { params: { id: string } })
   const stats = computeBrainStats(brain);
 
   return (
-    <div className="space-y-6">
-      <ClientHero client={client} lastCallDate={stats.lastCallDate} />
+    <div className="flex h-[calc(100dvh-6.5rem)] max-h-[calc(100dvh-6.5rem)] flex-col gap-4 overflow-hidden">
+      <div className="flex shrink-0 flex-col gap-6">
+        <ClientHero client={client} lastCallDate={stats.lastCallDate} />
 
-      <MomentumPanel stats={stats} brain={brain} wins={brain.wins?.length ?? 0} />
+        <MomentumPanel stats={stats} brain={brain} wins={brain.win_entries?.length ?? brain.wins?.length ?? 0} />
+      </div>
 
-      <BrainTabs
-        panels={{
-          overview: <OverviewTab brain={brain} clientId={client.id} />,
-          deliverables: (
-            <DeliverableBoard
-              ours={brain.our_deliverables ?? []}
-              theirs={brain.client_deliverables ?? []}
-            />
-          ),
-          contacts: (
-            <ContactList
-              clientContacts={brain.client_contacts ?? []}
-              internalTeam={buildInternalTeam(client.pmName, client.adName, brain.internal_team ?? [])}
-            />
-          ),
-          calls: <CallTimeline entries={brain.call_log ?? []} />,
-          documents: (
-            <DocumentsPanel
-              clientId={client.id}
-              initialFolderUrl={client.driveFolderUrl}
-              documents={brain.documents ?? []}
-            />
-          ),
-        }}
-      />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <BrainTabs
+          panels={{
+            overview: <OverviewTab brain={brain} clientId={client.id} />,
+            deliverables: (
+              <DeliverableBoard
+                ours={brain.our_deliverables ?? []}
+                theirs={brain.client_deliverables ?? []}
+              />
+            ),
+            contacts: (
+              <ContactList
+                clientContacts={brain.client_contacts ?? []}
+                internalTeam={buildInternalTeam(client.pmName, client.adName, brain.internal_team ?? [])}
+              />
+            ),
+            calls: <CallTimeline entries={brain.call_log ?? []} />,
+            documents: (
+              <DocumentsPanel
+                clientId={client.id}
+                initialFolderUrl={client.driveFolderUrl}
+                documents={brain.documents ?? []}
+              />
+            ),
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -83,12 +88,24 @@ function buildInternalTeam(
 
 function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string }) {
   const concerns = brain.open_concerns ?? [];
-  const wins = brain.wins ?? [];
-  const decisions = brain.decisions_made ?? [];
+  const wins: BrainWin[] =
+    brain.win_entries ??
+    (brain.wins ?? []).map((text, i) => ({
+      id: `legacy-win-${i}`,
+      text,
+      call_date: undefined,
+    }));
+  const decisions: BrainDecision[] =
+    brain.decisions ??
+    (brain.decisions_made ?? []).map((text, i) => ({
+      id: `legacy-decision-${i}`,
+      text,
+      call_date: undefined,
+    }));
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <Card className="flex h-[280px] flex-col">
+    <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2 lg:grid-rows-2">
+      <Card className="flex h-full min-h-[200px] flex-col overflow-hidden lg:min-h-0">
         <CardHeader>
           <CardTitle icon={<AlertTriangle className="h-3.5 w-3.5 text-status-yellow" />}>
             Open Concerns
@@ -97,7 +114,7 @@ function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string
             {concerns.length}
           </span>
         </CardHeader>
-        <CardBody className="flex-1 overflow-y-auto p-0">
+        <CardBody className="min-h-0 flex-1 overflow-y-auto p-0">
           {concerns.length === 0 ? (
             <div className="p-6">
               <EmptyState
@@ -108,100 +125,72 @@ function OverviewTab({ brain, clientId }: { brain: ClientBrain; clientId: string
           ) : (
             <ul className="divide-y divide-border">
               {concerns.map((c, i) => (
-                <li
-                  key={i}
-                  className="group relative flex items-start justify-between gap-3 px-4 py-3 transition hover:bg-surface-2">
-                  <span
-                    aria-hidden
-                    className="absolute inset-y-0 left-0 w-[2px] bg-status-yellow/60"
-                  />
-                  <div className="min-w-0 pl-2">
-                    <div className="text-[13px] text-text">{c.concern}</div>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text-muted">
-                      {c.owner && (
-                        <span>
-                          Owner · <span className="text-text-dim">{c.owner}</span>
-                        </span>
-                      )}
-                      {c.blocker_for && (
-                        <span className="text-status-red">
-                          Blocking · {c.blocker_for}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <StatusBadge status={c.status ?? 'open'} />
-                </li>
+                <OpenConcernRow key={c.id ?? `concern-${i}`} concern={c} />
               ))}
             </ul>
           )}
         </CardBody>
       </Card>
 
-      <div className="relative h-[280px] overflow-hidden rounded-xl border border-accent/25 bg-gradient-to-br from-accent/8 via-surface to-surface p-px shadow-glow-soft">
-        <div className="flex h-full flex-col rounded-[11px] bg-surface">
+      <div className="relative flex h-full min-h-[200px] flex-col overflow-hidden rounded-xl border border-accent/25 bg-gradient-to-br from-accent/8 via-surface to-surface p-px shadow-glow-soft lg:min-h-0">
+        <div className="flex h-full min-h-0 flex-1 flex-col rounded-[11px] bg-surface">
           <div className="flex items-center gap-2 border-b border-accent/15 px-4 py-3">
             <Sparkles className="h-3.5 w-3.5 text-accent" />
             <h3 className="text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text">
               AI Briefing
             </h3>
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
             <QuickBriefing clientId={clientId} compact />
           </div>
         </div>
       </div>
 
-      <Card className="flex h-[280px] flex-col">
-        <CardHeader>
-          <CardTitle icon={<Trophy className="h-3.5 w-3.5 text-status-green" />}>
-            Recent Wins
-          </CardTitle>
-          <span className="stat-num rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
+      <Card className="flex h-full min-h-[200px] flex-col overflow-hidden lg:min-h-0">
+        <CardHeader className="shrink-0 items-start">
+          <div>
+            <CardTitle icon={<Trophy className="h-3.5 w-3.5 text-status-green" />}>
+              Wins by call
+            </CardTitle>
+            <p className="mt-1 max-w-xl text-[11px] font-normal normal-case tracking-normal text-text-muted">
+              Pick a call date in the strip below to read wins from that session.
+            </p>
+          </div>
+          <span className="stat-num shrink-0 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
             {wins.length}
           </span>
         </CardHeader>
-        <CardBody className="flex-1 overflow-y-auto">
-          {wins.length === 0 ? (
-            <EmptyState
-              title="No wins logged yet."
-              description="Wins are extracted from processed calls."
-            />
-          ) : (
-            <ul className="space-y-2 text-[13px]">
-              {wins.map((w, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-status-green shadow-[0_0_0_3px_rgba(34,197,94,0.15)]" />
-                  <span className="text-text">{w}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardBody className="flex min-h-0 flex-1 flex-col overflow-hidden pt-0">
+          <CallGroupedEntries
+            variant="wins"
+            items={wins.map(w => ({ id: w.id, text: w.text, call_date: w.call_date }))}
+            emptyTitle="No wins logged yet."
+            emptyDescription="Wins appear here after each call transcript is processed."
+          />
         </CardBody>
       </Card>
 
-      <Card className="flex h-[280px] flex-col">
-        <CardHeader>
-          <CardTitle icon={<CheckCircle2 className="h-3.5 w-3.5 text-accent" />}>
-            Recent Decisions
-          </CardTitle>
-          <span className="stat-num rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
+      <Card className="flex h-full min-h-[200px] flex-col overflow-hidden lg:min-h-0">
+        <CardHeader className="shrink-0 items-start">
+          <div>
+            <CardTitle icon={<CheckCircle2 className="h-3.5 w-3.5 text-accent" />}>
+              Decisions by call
+            </CardTitle>
+            <p className="mt-1 max-w-xl text-[11px] font-normal normal-case tracking-normal text-text-muted">
+              Scroll dates horizontally, then select one to view decisions from that call.
+            </p>
+          </div>
+          <span className="stat-num shrink-0 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] text-text-muted">
             {decisions.length}
           </span>
         </CardHeader>
-        <CardBody className="flex-1 overflow-y-auto">
-          {decisions.length === 0 ? (
-            <EmptyState title="No decisions logged." />
-          ) : (
-            <ul className="space-y-2 text-[13px]">
-              {decisions.map((d, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent shadow-[0_0_0_3px_rgba(99,102,241,0.18)]" />
-                  <span className="text-text">{d}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardBody className="flex min-h-0 flex-1 flex-col overflow-hidden pt-0">
+          <CallGroupedEntries
+            variant="decisions"
+            items={decisions.map(d => ({ id: d.id, text: d.text, call_date: d.call_date }))}
+            emptyTitle="No decisions logged yet."
+            emptyDescription="Decisions surface here when synthesis extracts them from a call."
+          />
         </CardBody>
       </Card>
     </div>

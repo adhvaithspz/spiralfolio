@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/shared/Card';
 import { Button } from '@/components/shared/Button';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { Tooltip } from '@/components/shared/Tooltip';
 import { AlertTriangle, FolderSync } from 'lucide-react';
 import type { BrainDocumentRef } from '@/lib/db/brain';
 
@@ -45,8 +46,8 @@ export function DocumentsPanel({
   };
 
   return (
-    <div className="space-y-4">
-      <Card>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      <Card className="shrink-0">
         <CardHeader>
           <CardTitle>Drive Folder</CardTitle>
         </CardHeader>
@@ -72,28 +73,34 @@ export function DocumentsPanel({
       </Card>
 
       {documents.length === 0 ? (
-        <EmptyState
-          title="No documents ingested yet."
-          description="Paste a Drive folder URL above and sync to extract project-relevant facts."
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <EmptyState
+            title="No documents ingested yet."
+            description="Paste a Drive folder URL above and sync to extract project-relevant facts."
+          />
+        </div>
       ) : (
-        <div className="space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
           {documents.map((d, i) => (
             <Card key={d.id ?? `${d.name}-${i}`}>
               <CardHeader>
                 <div className="flex items-center gap-2">
                   <CardTitle>{d.name}</CardTitle>
                   {d.type && (
-                    <span className="rounded-full border border-border bg-bg px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-text-dim">
-                      {d.type}
-                    </span>
+                    <Tooltip content="Category the model assigned when this file was ingested (contract, brief, audit, deck, etc.).">
+                      <span className="inline-flex cursor-help rounded-full border border-border bg-bg px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-text-dim">
+                        {d.type}
+                      </span>
+                    </Tooltip>
                   )}
                 </div>
                 {!!d.flags?.length && (
-                  <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-status-yellow">
-                    <AlertTriangle className="h-3 w-3" />
-                    {d.flags.length} flag{d.flags.length === 1 ? '' : 's'}
-                  </span>
+                  <Tooltip content="Facts from this document that may contradict other sources in the brain — review before relying on them.">
+                    <span className="inline-flex cursor-help items-center gap-1 text-[10px] uppercase tracking-wider text-status-yellow">
+                      <AlertTriangle className="h-3 w-3" />
+                      {d.flags.length} flag{d.flags.length === 1 ? '' : 's'}
+                    </span>
+                  </Tooltip>
                 )}
               </CardHeader>
               <CardBody className="space-y-3 text-[13px]">

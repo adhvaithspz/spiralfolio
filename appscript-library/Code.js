@@ -60,7 +60,7 @@ function doPost(e) {
       });
       logSpiralFolioEvent({
         eventType:    'zoom_webhook_received',
-        source:       'appscript',
+        source:       'zoom',
         severity:     'info',
         message:      'Zoom event "' + event + '" received for ' + meetingTopic,
         meetingId:    meetingId,

@@ -5,7 +5,7 @@ import type { EventSeverity, EventSource } from '@/lib/db/schema';
 
 export const dynamic = 'force-dynamic';
 
-const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual'];
+const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
 const SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 /**
@@ -60,7 +60,10 @@ export async function POST(req: Request) {
 
   const sourceRaw = String(body.source ?? 'appscript') as EventSource;
   const severityRaw = String(body.severity ?? 'info') as EventSeverity;
-  const source: EventSource = SOURCES.includes(sourceRaw) ? sourceRaw : 'appscript';
+  let source: EventSource = SOURCES.includes(sourceRaw) ? sourceRaw : 'appscript';
+  if (eventType === 'zoom_webhook_received' || eventType.startsWith('zoom_')) {
+    source = 'zoom';
+  }
   const severity: EventSeverity = SEVERITIES.includes(severityRaw) ? severityRaw : 'info';
 
   const at = (() => {

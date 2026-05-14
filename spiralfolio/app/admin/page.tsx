@@ -4,10 +4,11 @@ import { listDistinctEventTypes, listEvents, summarizeEvents } from '@/lib/db/ev
 import { listClients } from '@/lib/db/queries';
 import { EventLogExplorer } from '@/components/admin/EventLogExplorer';
 import type { EventSeverity, EventSource } from '@/lib/db/schema';
+import { mergeEventTypeFilters, parseEventGroupsParam } from '@/lib/admin/event-filters';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual'];
+const VALID_SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
 const VALID_SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 function parseList<T extends string>(value: string | undefined, allowed?: readonly T[]): T[] {
@@ -37,7 +38,10 @@ export default async function AdminEventsPage({
     return Array.isArray(v) ? v[0] : v;
   };
 
-  const eventTypes = parseList(get('event_types'));
+  const eventTypesRaw = parseList(get('event_types'));
+  const eventGroups = parseEventGroupsParam(get('event_groups'));
+  const mergedEventTypes = mergeEventTypeFilters(eventTypesRaw, eventGroups);
+
   const sources = parseList<EventSource>(get('sources'), VALID_SOURCES);
   const severities = parseList<EventSeverity>(get('severities'), VALID_SEVERITIES);
   const clientId = get('client_id') || undefined;
@@ -46,7 +50,9 @@ export default async function AdminEventsPage({
   const until = parseDate(get('until'));
 
   const filters = {
-    eventTypes: eventTypes.length ? eventTypes : undefined,
+    eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
+    eventGroups: eventGroups.length ? eventGroups : undefined,
+    eventTypesIndividual: eventTypesRaw.length ? eventTypesRaw : undefined,
     sources: sources.length ? sources : undefined,
     severities: severities.length ? severities : undefined,
     clientId,
@@ -73,7 +79,8 @@ export default async function AdminEventsPage({
       clients={allClients.map(c => ({ id: c.id, name: c.name }))}
       username={session.username}
       initialFilters={{
-        eventTypes,
+        eventTypes: eventTypesRaw,
+        eventGroups,
         sources,
         severities,
         clientId: clientId ?? '',

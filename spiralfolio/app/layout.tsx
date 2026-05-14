@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import './globals.css';
 import { BRAND } from '@/lib/brand';
 import { ClientFinder } from '@/components/shared/ClientFinder';
+import { TooltipProvider } from '@/components/shared/Tooltip';
 import { UserMenu } from '@/components/shared/UserMenu';
 import { USER_COOKIE_NAME, readUserSession } from '@/lib/google-auth';
 
@@ -19,6 +20,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-bg text-text">
+        <TooltipProvider>
         {session && (
           <header className="sticky top-0 z-30 w-full border-b border-border-strong bg-surface/85 shadow-[0_1px_0_0_rgba(0,0,0,0.4)] backdrop-blur-xl">
             <div className="flex h-14 w-full items-center justify-between px-6 lg:px-8">
@@ -63,6 +65,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </header>
         )}
         <main className="mx-auto max-w-[1400px] px-6 py-6 lg:py-5">{children}</main>
+        </TooltipProvider>
       </body>
     </html>
   );

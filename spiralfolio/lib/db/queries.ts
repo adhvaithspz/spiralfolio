@@ -23,9 +23,13 @@ import {
   type BrainCallLogEntry,
   type BrainConcern,
   type BrainContact,
+  type BrainDecision,
   type BrainDeliverable,
   type BrainDocumentRef,
+  type BrainWin,
+  type CallChanges,
   type ClientBrain,
+  type HistoryEntry,
 } from './brain';
 import { safeParse } from '@/lib/utils/json';
 
@@ -61,11 +65,19 @@ export async function listDeliverables(clientId: string): Promise<Deliverable[]>
 }
 
 export async function listDecisions(clientId: string) {
-  return db.select().from(decisions).where(eq(decisions.clientId, clientId)).orderBy(desc(decisions.decidedAt));
+  return db
+    .select()
+    .from(decisions)
+    .where(eq(decisions.clientId, clientId))
+    .orderBy(desc(decisions.sourceCallDate), desc(decisions.decidedAt));
 }
 
 export async function listWins(clientId: string) {
-  return db.select().from(wins).where(eq(wins.clientId, clientId)).orderBy(desc(wins.wonAt));
+  return db
+    .select()
+    .from(wins)
+    .where(eq(wins.clientId, clientId))
+    .orderBy(desc(wins.sourceCallDate), desc(wins.wonAt));
 }
 
 
@@ -92,22 +104,41 @@ function toBrainContact(c: Contact): BrainContact {
   };
 }
 
+const isoOrUndef = (d: Date | null | undefined): string | undefined =>
+  d ? new Date(d).toISOString() : undefined;
+
+function parseHistory(raw: string | null | undefined): HistoryEntry[] | undefined {
+  if (!raw) return undefined;
+  const arr = safeParse<HistoryEntry[]>(raw, []);
+  return arr.length ? arr : undefined;
+}
+
 function toBrainConcern(c: Concern): BrainConcern {
   return {
+    id: c.id,
     concern: c.concern,
     owner: c.owner ?? undefined,
     blocker_for: c.blockerFor ?? undefined,
     status: c.status,
+    resolved_at: isoOrUndef(c.resolvedAt),
+    updated_at: isoOrUndef(c.updatedAt ?? c.createdAt),
+    last_updated_call_id: c.lastUpdatedCallId ?? undefined,
+    history: parseHistory(c.history),
   };
 }
 
 function toBrainDeliverable(d: Deliverable): BrainDeliverable {
   return {
+    id: d.id,
     item: d.item,
     details: d.details ?? undefined,
     owner: d.owner ?? undefined,
     due: d.due ?? undefined,
     status: d.status,
+    completed_at: isoOrUndef(d.completedAt),
+    updated_at: isoOrUndef(d.updatedAt ?? d.createdAt),
+    last_updated_call_id: d.lastUpdatedCallId ?? undefined,
+    history: parseHistory(d.history),
   };
 }
 
@@ -123,12 +154,14 @@ function toBrainDocument(d: Document): BrainDocumentRef {
 
 function toBrainCallEntry(c: Call): BrainCallLogEntry {
   return {
+    id: c.id,
     date: c.callDate,
     type: c.callType ?? undefined,
     summary: c.callSummary ?? undefined,
     key_updates: safeParse<string[]>(c.keyUpdates ?? '[]', []),
     attendees_client: safeParse<string[]>(c.attendeesClient ?? '[]', []),
     attendees_internal: safeParse<string[]>(c.attendeesInternal ?? '[]', []),
+    changes: c.brainChanges ? safeParse<CallChanges | undefined>(c.brainChanges, undefined) : undefined,
   };
 }
 
@@ -164,6 +197,27 @@ export async function getClientBrain(clientId: string): Promise<ClientBrain> {
   const lastCallRow = callRows[0];
   const lastUpdated = c.updatedAt ?? c.createdAt ?? null;
 
+  const decisions: BrainDecision[] = decisionRows.map(d => ({
+    id: d.id,
+    text: d.text,
+    call_date: d.sourceCallDate ?? (d.decidedAt ? new Date(d.decidedAt).toISOString().slice(0, 10) : undefined),
+    call_id: d.sourceCallId ?? d.lastUpdatedCallId ?? undefined,
+    decided_at: isoOrUndef(d.decidedAt),
+    updated_at: isoOrUndef(d.updatedAt ?? d.decidedAt),
+    last_updated_call_id: d.lastUpdatedCallId ?? undefined,
+    history: parseHistory(d.history),
+  }));
+  const winEntries: BrainWin[] = winRows.map(w => ({
+    id: w.id,
+    text: w.text,
+    call_date: w.sourceCallDate ?? (w.wonAt ? new Date(w.wonAt).toISOString().slice(0, 10) : undefined),
+    call_id: w.sourceCallId ?? w.lastUpdatedCallId ?? undefined,
+    won_at: isoOrUndef(w.wonAt),
+    updated_at: isoOrUndef(w.updatedAt ?? w.wonAt),
+    last_updated_call_id: w.lastUpdatedCallId ?? undefined,
+    history: parseHistory(w.history),
+  }));
+
   return {
     client: c.name,
     pm: c.pmName ?? undefined,
@@ -179,8 +233,10 @@ export async function getClientBrain(clientId: string): Promise<ClientBrain> {
     resolved_concerns: allConcerns.filter(x => x.status === 'resolved').map(toBrainConcern),
     our_deliverables: allDeliverables.filter(d => d.side === 'us').map(toBrainDeliverable),
     client_deliverables: allDeliverables.filter(d => d.side === 'client').map(toBrainDeliverable),
-    decisions_made: decisionRows.map(d => d.text),
-    wins: winRows.map(w => w.text),
+    decisions,
+    decisions_made: decisions.map(d => d.text),
+    win_entries: winEntries,
+    wins: winEntries.map(w => w.text),
     documents: docRows.map(toBrainDocument),
     call_log: callRows.map(toBrainCallEntry),
   };

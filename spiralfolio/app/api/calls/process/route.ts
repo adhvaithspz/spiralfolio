@@ -7,7 +7,7 @@ import { nanoid } from '@/lib/utils/nanoid';
 import { getClient, getClientBrain } from '@/lib/db/queries';
 import { applyCallSynthesis } from '@/lib/db/mutations';
 import { safeStringify } from '@/lib/utils/json';
-import { synthesizeCall } from '@/lib/ai/synthesis';
+import { synthesizeCall, buildPriorContext } from '@/lib/ai/synthesis';
 import { extractDocument } from '@/lib/ai/documents';
 import { logEvent } from '@/lib/db/events';
 
@@ -78,6 +78,7 @@ export async function POST(req: Request) {
   if (duplicate && duplicate.status !== 'error') {
     await logEvent({
       eventType: 'transcript_uploaded',
+      source: 'manual',
       severity: 'warning',
       message: `Duplicate transcript ignored — call already exists for ${client.name} on ${callDate} (${callType})`,
       clientId,
@@ -104,14 +105,32 @@ export async function POST(req: Request) {
     createdAt: now,
   });
 
+  await logEvent({
+    eventType: 'transcript_uploaded',
+    source: 'manual',
+    severity: 'info',
+    message: `Transcript received — ${client.name} · ${callDate} (${callType})`,
+    clientId,
+    clientName: client.name,
+    callId,
+    callDate,
+    payload: { filename, transcriptLength: transcript.length, phase: 'queued' },
+  });
+
   try {
-    const [synthesis, docExtraction] = await Promise.all([
+    // Snapshot prior brain BEFORE this call mutates it so the AI can
+    // reference existing items by stable refs (C1, D2, …).
+    const priorBrain = await getClientBrain(clientId);
+    const priorContext = buildPriorContext(priorBrain);
+
+    const [{ synthesis, refs }, docExtraction] = await Promise.all([
       synthesizeCall({
         projectName: client.engagement ?? client.name,
         clientName: client.name,
         callType,
         callDate,
         transcript,
+        prior: priorContext,
       }),
       extractDocument({
         filename,
@@ -121,7 +140,14 @@ export async function POST(req: Request) {
       }).catch(() => null),
     ]);
 
-    const changes = await applyCallSynthesis({ clientId, synthesis, at: now });
+    const changes = await applyCallSynthesis({
+      clientId,
+      synthesis,
+      refs,
+      callId,
+      callDate,
+      at: now,
+    });
 
     if (docExtraction) {
       await db.insert(documents).values({
@@ -144,16 +170,19 @@ export async function POST(req: Request) {
       attendeesClient: safeStringify(synthesis.attendees_client),
       attendeesInternal: safeStringify(synthesis.attendees_internal),
       brainSnapshot: safeStringify(updatedBrain),
+      brainChanges: safeStringify(changes),
     }).where(eq(calls.id, callId));
 
     const changesSummary = {
-      new_contacts: changes.contactsAdded,
-      new_concerns: changes.concernsAdded,
-      resolved_concerns: changes.concernsResolved,
-      new_deliverables: changes.deliverablesAdded,
-      updated_deliverables: changes.deliverablesUpdated,
-      decisions_made: changes.decisionsAdded,
-      wins: changes.winsAdded,
+      new_contacts: changes.contacts_added,
+      new_concerns: changes.concerns_added,
+      resolved_concerns: changes.concerns_resolved,
+      extended_concerns: changes.concerns_extended,
+      new_deliverables: changes.deliverables_added,
+      completed_deliverables: changes.deliverables_completed,
+      extended_deliverables: changes.deliverables_extended + changes.deliverables_status_changed,
+      decisions_made: changes.decisions_added,
+      wins: changes.wins_added,
     };
 
     const changeCount = Object.values(changesSummary).reduce((a, b) => a + b, 0);
@@ -205,8 +234,10 @@ function describeChanges(c: {
   new_contacts: number;
   new_concerns: number;
   resolved_concerns: number;
+  extended_concerns: number;
   new_deliverables: number;
-  updated_deliverables: number;
+  completed_deliverables: number;
+  extended_deliverables: number;
   decisions_made: number;
   wins: number;
 }): string {
@@ -214,8 +245,10 @@ function describeChanges(c: {
   if (c.new_contacts) parts.push(`${c.new_contacts} contact${c.new_contacts === 1 ? '' : 's'}`);
   if (c.new_concerns) parts.push(`${c.new_concerns} new concern${c.new_concerns === 1 ? '' : 's'}`);
   if (c.resolved_concerns) parts.push(`${c.resolved_concerns} resolved`);
+  if (c.extended_concerns) parts.push(`${c.extended_concerns} concern update${c.extended_concerns === 1 ? '' : 's'}`);
   if (c.new_deliverables) parts.push(`${c.new_deliverables} new deliverable${c.new_deliverables === 1 ? '' : 's'}`);
-  if (c.updated_deliverables) parts.push(`${c.updated_deliverables} deliverable update${c.updated_deliverables === 1 ? '' : 's'}`);
+  if (c.completed_deliverables) parts.push(`${c.completed_deliverables} completed`);
+  if (c.extended_deliverables) parts.push(`${c.extended_deliverables} deliverable update${c.extended_deliverables === 1 ? '' : 's'}`);
   if (c.decisions_made) parts.push(`${c.decisions_made} decision${c.decisions_made === 1 ? '' : 's'}`);
   if (c.wins) parts.push(`${c.wins} win${c.wins === 1 ? '' : 's'}`);
   return parts.length ? parts.join(', ') : 'no changes';

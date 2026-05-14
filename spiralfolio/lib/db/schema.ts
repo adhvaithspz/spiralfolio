@@ -54,6 +54,11 @@ export const concerns = sqliteTable('concerns', {
   status: text('status').notNull().default('open'), // 'open' | 'in-progress' | 'resolved'
   resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  // Per-call mutation log so the UI can show "extended on date X by call Y".
+  // Shape: HistoryEntry[] — see lib/db/brain.ts.
+  history: text('history').default('[]'),
+  lastUpdatedCallId: text('last_updated_call_id'),
 });
 
 export const deliverables = sqliteTable('deliverables', {
@@ -69,6 +74,9 @@ export const deliverables = sqliteTable('deliverables', {
   side: text('side').notNull(), // 'us' | 'client'
   createdAt: integer('created_at', { mode: 'timestamp' }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  history: text('history').default('[]'), // HistoryEntry[]
+  lastUpdatedCallId: text('last_updated_call_id'),
 });
 
 export const decisions = sqliteTable('decisions', {
@@ -78,6 +86,12 @@ export const decisions = sqliteTable('decisions', {
     .references(() => clients.id, { onDelete: 'cascade' }),
   text: text('text').notNull(),
   decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  history: text('history').default('[]'), // HistoryEntry[]
+  lastUpdatedCallId: text('last_updated_call_id'),
+  /** Call session this decision was logged from — mirrors calls.call_date for grouping in UI */
+  sourceCallDate: text('source_call_date'),
+  sourceCallId: text('source_call_id'),
 });
 
 export const wins = sqliteTable('wins', {
@@ -87,6 +101,11 @@ export const wins = sqliteTable('wins', {
     .references(() => clients.id, { onDelete: 'cascade' }),
   text: text('text').notNull(),
   wonAt: integer('won_at', { mode: 'timestamp' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  history: text('history').default('[]'), // HistoryEntry[]
+  lastUpdatedCallId: text('last_updated_call_id'),
+  sourceCallDate: text('source_call_date'),
+  sourceCallId: text('source_call_id'),
 });
 
 
@@ -117,6 +136,10 @@ export const calls = sqliteTable('calls', {
   attendeesClient: text('attendees_client').default('[]'), // JSON string[]
   attendeesInternal: text('attendees_internal').default('[]'), // JSON string[]
   brainSnapshot: text('brain_snapshot'), // JSON snapshot of assembled brain at processing time
+  // What this call did to the brain — counts + per-item refs so the timeline
+  // can show "this call completed 2 deliverables, extended 1 concern, …"
+  // Shape: CallChanges — see lib/db/brain.ts.
+  brainChanges: text('brain_changes'),
   status: text('status').default('pending'), // pending | processing | done | error
   createdAt: integer('created_at', { mode: 'timestamp' }),
 });
@@ -146,7 +169,7 @@ export const users = sqliteTable('users', {
 export const eventLogs = sqliteTable('event_logs', {
   id: text('id').primaryKey(),
   eventType: text('event_type').notNull(),
-  source: text('source').notNull().default('spiralfolio'), // spiralfolio | appscript | cloudflare | manual
+  source: text('source').notNull().default('spiralfolio'), // spiralfolio | appscript | cloudflare | manual | zoom
   severity: text('severity').notNull().default('info'), // info | success | warning | error
   message: text('message'),
 
@@ -195,7 +218,7 @@ export type DeliverableSide = 'us' | 'client';
 export type ContactSide = 'client' | 'internal';
 export type UserRole = 'admin' | 'pm' | 'ad' | 'stakeholder';
 
-export type EventSource = 'spiralfolio' | 'appscript' | 'cloudflare' | 'manual';
+export type EventSource = 'spiralfolio' | 'appscript' | 'cloudflare' | 'manual' | 'zoom';
 export type EventSeverity = 'info' | 'success' | 'warning' | 'error';
 
 /**
@@ -216,6 +239,7 @@ export const KNOWN_EVENT_TYPES = [
   'slack_dm_failed',
   'transcript_uploaded',
   'call_imported',
+  'brain_changed',
   'call_processing_error',
 ] as const;
 export type KnownEventType = (typeof KNOWN_EVENT_TYPES)[number];

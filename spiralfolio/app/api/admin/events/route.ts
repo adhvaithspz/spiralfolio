@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { getAdminSession } from '@/lib/admin-auth';
 import { listEvents, summarizeEvents, type ListEventsFilters } from '@/lib/db/events';
 import type { EventSeverity, EventSource } from '@/lib/db/schema';
+import { mergeEventTypeFilters, parseEventGroupsParam } from '@/lib/admin/event-filters';
 
 export const dynamic = 'force-dynamic';
 
-const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual'];
+const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
 const SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 function parseList(value: string | null): string[] {
@@ -22,14 +23,19 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const params = url.searchParams;
 
-  const eventTypes = parseList(params.get('event_types'));
+  const eventTypesRaw = parseList(params.get('event_types'));
+  const eventGroups = parseEventGroupsParam(params.get('event_groups'));
+  const mergedEventTypes = mergeEventTypeFilters(eventTypesRaw, eventGroups);
+
   const sourcesRaw = parseList(params.get('sources')) as EventSource[];
   const severitiesRaw = parseList(params.get('severities')) as EventSeverity[];
   const sources = sourcesRaw.filter(s => SOURCES.includes(s));
   const severities = severitiesRaw.filter(s => SEVERITIES.includes(s));
 
   const filters: ListEventsFilters = {
-    eventTypes: eventTypes.length ? eventTypes : undefined,
+    eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
+    eventGroups: eventGroups.length ? eventGroups : undefined,
+    eventTypesIndividual: eventTypesRaw.length ? eventTypesRaw : undefined,
     sources: sources.length ? sources : undefined,
     severities: severities.length ? severities : undefined,
     clientId: params.get('client_id') ?? undefined,
