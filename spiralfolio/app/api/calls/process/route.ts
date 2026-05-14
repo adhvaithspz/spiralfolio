@@ -104,21 +104,6 @@ export async function POST(req: Request) {
     createdAt: now,
   });
 
-  await logEvent({
-    eventType: 'transcript_uploaded',
-    severity: 'info',
-    message: `Transcript received for ${client.name} (${callType}, ${callDate})`,
-    clientId,
-    clientName: client.name,
-    callId,
-    callDate,
-    payload: {
-      filename,
-      transcriptLength: transcript.length,
-      contentType: contentType || 'application/json',
-    },
-  });
-
   try {
     const [synthesis, docExtraction] = await Promise.all([
       synthesizeCall({
@@ -172,36 +157,27 @@ export async function POST(req: Request) {
     };
 
     const changeCount = Object.values(changesSummary).reduce((a, b) => a + b, 0);
+    const brainSummary = changeCount > 0 ? describeChanges(changesSummary) : 'no brain changes';
 
     await logEvent({
       eventType: 'call_imported',
       severity: 'success',
-      message: `Imported ${callType} call for ${client.name} (${callDate})`,
+      message: `Imported ${callType} call for ${client.name} (${callDate}) — ${brainSummary}`,
       clientId,
       clientName: client.name,
       callId,
       callDate,
       payload: {
+        filename,
+        transcriptLength: transcript.length,
         callSummary: synthesis.call_summary,
         attendeesClient: synthesis.attendees_client,
         attendeesInternal: synthesis.attendees_internal,
         documentsExtracted: docExtraction ? 1 : 0,
+        brainChanges: changesSummary,
         durationMs: Date.now() - now.getTime(),
       },
     });
-
-    if (changeCount > 0) {
-      await logEvent({
-        eventType: 'brain_changed',
-        severity: 'info',
-        message: `Brain updated for ${client.name}: ${describeChanges(changesSummary)}`,
-        clientId,
-        clientName: client.name,
-        callId,
-        callDate,
-        payload: changesSummary,
-      });
-    }
 
     return NextResponse.json({
       call_id: callId,

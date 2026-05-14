@@ -216,9 +216,6 @@ export const KNOWN_EVENT_TYPES = [
   'slack_dm_failed',
   'transcript_uploaded',
   'call_imported',
-  'brain_changed',
   'call_processing_error',
-  'admin_login_succeeded',
-  'admin_login_failed',
 ] as const;
 export type KnownEventType = (typeof KNOWN_EVENT_TYPES)[number];

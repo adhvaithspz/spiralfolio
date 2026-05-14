@@ -84,6 +84,16 @@ function doPost(e) {
           hostEmail:    hostEmail,
           error:        'Host is not a PM or AD'
         });
+        logSpiralFolioEvent({
+          eventType:    'appscript_processing_skipped',
+          source:       'appscript',
+          severity:     'info',
+          message:      'Skipped — host is not a PM or AD (' + hostEmail + ')',
+          meetingId:    meetingId,
+          meetingTopic: meetingTopic,
+          callDate:     object.start_time || null,
+          payload:      { reason: 'host_not_pm_or_ad', hostEmail: hostEmail, event: event },
+        });
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'skipped' }))
           .setMimeType(ContentService.MimeType.JSON);
@@ -104,6 +114,16 @@ function doPost(e) {
           meetingTopic: meetingTopic,
           hostEmail:    hostEmail,
           error:        'Pre-screened as internal — not queued'
+        });
+        logSpiralFolioEvent({
+          eventType:    'appscript_processing_skipped',
+          source:       'appscript',
+          severity:     'info',
+          message:      'Pre-screened as internal — not queued (' + meetingTopic + ')',
+          meetingId:    meetingId,
+          meetingTopic: meetingTopic,
+          callDate:     object.start_time || null,
+          payload:      { reason: 'internal_call', hostEmail: hostEmail, callType: callType, event: event },
         });
         return ContentService
           .createTextOutput(JSON.stringify({ status: 'skipped_internal' }))
@@ -365,6 +385,15 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
         hostEmail:    hostEmail,
         error:        'Already processed — duplicate prevented'
       });
+      logSpiralFolioEvent({
+        eventType:    'appscript_processing_skipped',
+        source:       'appscript',
+        severity:     'warning',
+        message:      'Already processed — duplicate prevented for ' + meetingTopic,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        payload:      { reason: 'already_processed', hostEmail: hostEmail, callType: callType },
+      });
       return;
     }
   }
@@ -401,6 +430,16 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
         hostEmail:    hostEmail,
         error:        'Skipped because no transcript file exists'
       });
+      logSpiralFolioEvent({
+        eventType:    'appscript_processing_skipped',
+        source:       'appscript',
+        severity:     'warning',
+        message:      'Skipped — no transcript file available for ' + meetingTopic,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     recording.start_time || null,
+        payload:      { reason: 'no_transcript_file', hostEmail: hostEmail, callType: callType },
+      });
       return;
     }
 
@@ -420,6 +459,22 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
         meetingTopic: meetingTopic,
         hostEmail:    hostEmail,
         error:        'Skipped because this is not an external client call'
+      });
+      logSpiralFolioEvent({
+        eventType:    'appscript_processing_skipped',
+        source:       'appscript',
+        severity:     'info',
+        message:      'Skipped — not an external client call (' + meetingTopic + ')',
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     recording.start_time || null,
+        payload:      {
+          reason: 'not_external_client',
+          hostEmail: hostEmail,
+          callType: callType,
+          externalCount: externalParticipants ? externalParticipants.length : 0,
+          internalCount: internalParticipants ? internalParticipants.length : 0,
+        },
       });
       return;
     }

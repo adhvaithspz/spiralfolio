@@ -62,6 +62,7 @@ function eventIcon(type: string) {
   if (type === 'transcript_uploaded') return <Upload className="h-4 w-4 text-status-blue" />;
   if (type === 'call_imported') return <ShieldCheck className="h-4 w-4 text-status-green" />;
   if (type === 'brain_changed') return <Brain className="h-4 w-4 text-accent" />;
+  if (type === 'appscript_processing_skipped') return <Slash className="h-4 w-4 text-text-muted" />;
   if (type.endsWith('_error')) return <ShieldAlert className="h-4 w-4 text-status-red" />;
   return <CircleDot className="h-4 w-4 text-text-muted" />;
 }
@@ -71,6 +72,19 @@ function prettyType(t: string): string {
 }
 
 export function EventRow({ row }: { row: EventLog }) {
+  return (
+    <li>
+      <EventRowBody row={row} />
+    </li>
+  );
+}
+
+/**
+ * Inner content of a row, without the surrounding <li>. Used by EventRow for
+ * the standalone case and by the grouping wrapper in EventLogExplorer when
+ * multiple related events share a single <li>.
+ */
+export function EventRowBody({ row, badge }: { row: EventLog; badge?: React.ReactNode }) {
   const [open, setOpen] = React.useState(false);
   const sev = SEVERITY_STYLES[(row.severity ?? 'info') as EventSeverity] ?? SEVERITY_STYLES.info;
   const src = SOURCE_STYLES[(row.source ?? 'spiralfolio') as EventSource] ?? SOURCE_STYLES.spiralfolio;
@@ -78,7 +92,7 @@ export function EventRow({ row }: { row: EventLog }) {
   const created = typeof row.createdAt === 'string' ? new Date(row.createdAt) : row.createdAt;
 
   return (
-    <li>
+    <>
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -102,6 +116,7 @@ export function EventRow({ row }: { row: EventLog }) {
               <span className="truncate text-[13px] font-medium text-text">
                 {prettyType(row.eventType)}
               </span>
+              {badge}
               <ChevronRight
                 className={
                   'h-3.5 w-3.5 shrink-0 text-text-muted transition ' + (open ? 'rotate-90' : '')
@@ -150,7 +165,7 @@ export function EventRow({ row }: { row: EventLog }) {
       </button>
 
       {open && <RowDetails row={row} />}
-    </li>
+    </>
   );
 }
 
@@ -215,7 +230,7 @@ function RowDetails({ row }: { row: EventLog }) {
             ['Event ID', <span key="id" className="font-mono text-[11px]">{row.id}</span>],
             ['Event type', <span key="t" className="font-mono text-[11px]">{row.eventType}</span>],
             ['Source', row.source],
-            ['Severity', row.severity],
+            ['Status', row.severity],
             ['Client ID', row.clientId ?? '—'],
             ['Client name', row.clientName ?? '—'],
             ['Meeting topic', row.meetingTopic ?? '—'],

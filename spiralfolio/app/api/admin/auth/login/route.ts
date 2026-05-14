@@ -6,7 +6,6 @@ import {
   isAdminConfigured,
   issueSessionToken,
 } from '@/lib/admin-auth';
-import { logEvent } from '@/lib/db/events';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,15 +35,6 @@ export async function POST(req: Request) {
   }
 
   if (!checkPassword(username, password)) {
-    await logEvent({
-      eventType: 'admin_login_failed',
-      severity: 'warning',
-      source: 'spiralfolio',
-      message: `Failed admin login attempt for username "${username}"`,
-      payload: {
-        userAgent: req.headers.get('user-agent') ?? null,
-      },
-    });
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
   }
 
@@ -52,13 +42,6 @@ export async function POST(req: Request) {
   if (!issued) {
     return NextResponse.json({ error: 'Session secret not configured' }, { status: 503 });
   }
-
-  await logEvent({
-    eventType: 'admin_login_succeeded',
-    severity: 'success',
-    source: 'spiralfolio',
-    message: `Admin "${username}" signed in`,
-  });
 
   const res = NextResponse.json({ ok: true, username, expiresAt: issued.expiresAt.toISOString() });
   res.cookies.set({

@@ -94,10 +94,22 @@ export type ListEventsResult = {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
 
+// Event types we never want to show in the admin dashboard. Keeping them as a
+// list (rather than deleting old rows) preserves the underlying audit trail
+// while hiding noise the operators don't care about.
+const HIDDEN_EVENT_TYPE_PATTERNS = ['admin_login_%'];
+
+function applyHiddenTypeFilter(conds: ReturnType<typeof eq>[]) {
+  for (const pattern of HIDDEN_EVENT_TYPE_PATTERNS) {
+    conds.push(sql`${eventLogs.eventType} NOT LIKE ${pattern}` as never);
+  }
+}
+
 export async function listEvents(filters: ListEventsFilters = {}): Promise<ListEventsResult> {
   const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   const conds = [] as ReturnType<typeof eq>[];
+  applyHiddenTypeFilter(conds);
 
   if (filters.eventTypes && filters.eventTypes.length) {
     conds.push(sql`${eventLogs.eventType} IN (${sql.join(filters.eventTypes.map(t => sql`${t}`), sql`, `)})` as never);
@@ -178,6 +190,7 @@ export async function listDistinctEventTypes(): Promise<string[]> {
   const rows = await db
     .selectDistinct({ eventType: eventLogs.eventType })
     .from(eventLogs)
+    .where(sql`${eventLogs.eventType} NOT LIKE 'admin_login_%'`)
     .orderBy(eventLogs.eventType);
   return rows.map(r => r.eventType);
 }
@@ -190,6 +203,7 @@ export type EventCountSummary = {
 
 export async function summarizeEvents(filters: ListEventsFilters = {}): Promise<EventCountSummary> {
   const conds = [] as ReturnType<typeof eq>[];
+  applyHiddenTypeFilter(conds);
   if (filters.since) conds.push(gte(eventLogs.createdAt, filters.since));
   if (filters.until) conds.push(lte(eventLogs.createdAt, filters.until));
 

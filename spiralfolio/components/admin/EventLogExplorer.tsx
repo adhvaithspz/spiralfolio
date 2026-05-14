@@ -5,17 +5,27 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Activity,
   AlertTriangle,
+  Brain,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleDot,
   Filter,
+  Layers,
   Loader2,
+  PhoneCall,
   RefreshCcw,
   Search,
+  Slash,
+  Sparkles,
   ShieldAlert,
+  ShieldCheck,
+  XCircle,
 } from 'lucide-react';
+import { relativeTime } from '@/lib/utils';
 import { Button } from '@/components/shared/Button';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { EventRow } from './EventRow';
+import { EventRowBody } from './EventRow';
 import { AdminLogoutButton } from './AdminLogoutButton';
 import type { EventLog, EventSeverity, EventSource } from '@/lib/db/schema';
 import type { EventCountSummary } from '@/lib/db/events';
@@ -70,7 +80,13 @@ export function EventLogExplorer({
   const [cursor, setCursor] = React.useState<string | null>(initialNextCursor);
   const [pending, setPending] = React.useState(false);
   const [autorefresh, setAutorefresh] = React.useState(false);
+  const [grouping, setGrouping] = React.useState(true);
   const [draft, setDraft] = React.useState<Filters>(initialFilters);
+
+  const groups = React.useMemo(
+    () => (grouping ? groupRelatedEvents(rows) : rows.map(r => ({ primary: r, others: [] }))),
+    [rows, grouping],
+  );
 
   React.useEffect(() => {
     setRows(initialRows);
@@ -176,6 +192,16 @@ export function EventLogExplorer({
           <label className="flex select-none items-center gap-2 rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
             <input
               type="checkbox"
+              checked={grouping}
+              onChange={e => setGrouping(e.target.checked)}
+              className="h-3 w-3 accent-accent"
+            />
+            <Layers className="h-3 w-3" />
+            Group related
+          </label>
+          <label className="flex select-none items-center gap-2 rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
+            <input
+              type="checkbox"
               checked={autorefresh}
               onChange={e => setAutorefresh(e.target.checked)}
               className="h-3 w-3 accent-accent"
@@ -218,7 +244,7 @@ export function EventLogExplorer({
           <div>Event</div>
           <div>Client / Meeting</div>
           <div>Source</div>
-          <div className="text-right">Severity</div>
+          <div className="text-right">Status</div>
         </div>
         {rows.length === 0 ? (
           <div className="p-10">
@@ -228,10 +254,18 @@ export function EventLogExplorer({
             />
           </div>
         ) : (
-          <ol className="divide-y divide-border">
-            {rows.map(row => (
-              <EventRow key={row.id} row={row} />
-            ))}
+          <ol className="flex flex-col gap-2 p-2">
+            {groups.map(group =>
+              group.others.length === 0 ? (
+                <li
+                  key={group.primary.id}
+                  className="overflow-hidden rounded-lg border border-border/70 bg-surface/40 transition hover:border-border-strong">
+                  <EventRowBody row={group.primary} />
+                </li>
+              ) : (
+                <GroupedEventRow key={group.primary.id} group={group} />
+              ),
+            )}
           </ol>
         )}
         {cursor && (
@@ -378,7 +412,7 @@ function FilterPanel({
           onToggle={v => setDraft(d => ({ ...d, sources: toggleArray(d.sources, v) }))}
         />
         <ChipGroup
-          label="Severity"
+          label="Status"
           options={ALL_SEVERITIES}
           selected={draft.severities}
           onToggle={v => setDraft(d => ({ ...d, severities: toggleArray(d.severities, v) }))}
@@ -442,5 +476,318 @@ function ChipGroup<T extends string>({
         })}
       </div>
     </div>
+  );
+}
+
+// ── Grouping ────────────────────────────────────────────────────────────────
+//
+// Many pipeline events arrive in clusters — e.g. a Zoom webhook is forwarded
+// by Cloudflare and then immediately mirrored by Apps Script, producing two
+// separate rows for the same logical event. Or a single call import used to
+// produce three rows (transcript_uploaded → call_imported → brain_changed).
+// We collapse rows that share the same meeting / call key AND occurred within
+// a short time window into a single visual "group", keeping all the underlying
+// rows accessible behind an expand toggle so nothing is hidden permanently.
+
+type EventGroup = {
+  primary: EventLog;
+  others: EventLog[]; // older events in the same group, ordered as in the source list
+};
+
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+function meetingKey(row: EventLog): string | null {
+  if (row.callId) return `call:${row.callId}`;
+  if (row.meetingId) return `meeting:${row.meetingId}`;
+  if (row.meetingTopic) {
+    const norm = row.meetingTopic.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (norm.length >= 3) return `topic:${norm}`;
+  }
+  return null;
+}
+
+function toMs(d: Date | string): number {
+  return (typeof d === 'string' ? new Date(d) : d).getTime();
+}
+
+function groupRelatedEvents(rows: EventLog[]): EventGroup[] {
+  const groups: EventGroup[] = [];
+
+  for (const row of rows) {
+    const key = meetingKey(row);
+    if (!key) {
+      groups.push({ primary: row, others: [] });
+      continue;
+    }
+
+    const ts = toMs(row.createdAt);
+    const match = groups.find(g => {
+      if (meetingKey(g.primary) !== key) return false;
+      const all = [g.primary, ...g.others];
+      return all.some(e => Math.abs(toMs(e.createdAt) - ts) <= GROUP_WINDOW_MS);
+    });
+
+    if (match) {
+      // rows arrive newest-first, so any row reaching here is older than primary
+      match.others.push(row);
+    } else {
+      groups.push({ primary: row, others: [] });
+    }
+  }
+
+  return groups;
+}
+
+const SEVERITY_RANK: Record<string, number> = { error: 4, warning: 3, success: 2, info: 1 };
+
+function dominantSeverity(events: EventLog[]): EventSeverity {
+  let bestRank = 0;
+  let best: EventSeverity = 'info';
+  for (const e of events) {
+    const sev = (e.severity ?? 'info') as EventSeverity;
+    const rank = SEVERITY_RANK[sev] ?? 0;
+    if (rank > bestRank) {
+      bestRank = rank;
+      best = sev;
+    }
+  }
+  return best;
+}
+
+const GROUP_SEVERITY_STYLES: Record<EventSeverity, { chip: string; icon: React.ReactNode; rail: string }> = {
+  success: {
+    chip: 'border-status-green/30 bg-status-green/10 text-status-green',
+    icon: <ShieldCheck className="h-3 w-3" />,
+    rail: 'bg-status-green/40',
+  },
+  info: {
+    chip: 'border-status-blue/30 bg-status-blue/10 text-status-blue',
+    icon: <CircleDot className="h-3 w-3" />,
+    rail: 'bg-status-blue/40',
+  },
+  warning: {
+    chip: 'border-status-yellow/30 bg-status-yellow/10 text-status-yellow',
+    icon: <AlertTriangle className="h-3 w-3" />,
+    rail: 'bg-status-yellow/40',
+  },
+  error: {
+    chip: 'border-status-red/30 bg-status-red/10 text-status-red',
+    icon: <XCircle className="h-3 w-3" />,
+    rail: 'bg-status-red/50',
+  },
+};
+
+const SOURCE_BADGE: Record<EventSource, string> = {
+  cloudflare: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
+  appscript: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  spiralfolio: 'border-accent/30 bg-accent-soft text-accent',
+  manual: 'border-border-strong bg-surface-2 text-text-dim',
+};
+
+/**
+ * A group's "kind" is derived from the event types present in it. We name the
+ * cluster after the most downstream / meaningful thing that happened so the
+ * header reads as a sentence in the operator's mental model rather than as a
+ * generic "related events" lump.
+ */
+type GroupKind = {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  iconWrap: string; // tailwind classes for the small icon tile
+};
+
+function classifyGroup(events: EventLog[]): GroupKind {
+  const types = new Set(events.map(e => e.eventType));
+  const has = (...needles: string[]) => needles.some(n => types.has(n));
+  const hasPrefix = (prefix: string) => Array.from(types).some(t => t.startsWith(prefix));
+
+  // 1. Client brain mutation — the SpiralFolio side of the pipeline.
+  if (has('brain_changed', 'call_imported', 'transcript_uploaded')) {
+    return {
+      title: 'Client Brain Updated',
+      description: 'Transcript ingested and client brain refreshed',
+      icon: <Brain className="h-3.5 w-3.5" />,
+      iconWrap: 'bg-accent-soft text-accent',
+    };
+  }
+
+  // 2. Coaching doc + Slack DM dispatch.
+  if (
+    has('coaching_doc_created', 'appscript_processing_completed', 'appscript_processing_started') ||
+    hasPrefix('slack_dm_')
+  ) {
+    return {
+      title: 'Coaching Pipeline Ran',
+      description: 'Apps Script generated coaching feedback and sent DMs',
+      icon: <Sparkles className="h-3.5 w-3.5" />,
+      iconWrap: 'bg-emerald-500/15 text-emerald-300',
+    };
+  }
+
+  // 3. Skipped at the webhook stage (host check, internal, etc).
+  if (has('appscript_processing_skipped')) {
+    return {
+      title: 'Call Skipped',
+      description: 'Webhook received but not queued for processing',
+      icon: <Slash className="h-3.5 w-3.5" />,
+      iconWrap: 'bg-surface-2 text-text-muted',
+    };
+  }
+
+  // 4. Webhook arrival — Zoom delivered an event via Cloudflare.
+  if (hasPrefix('cloudflare_') || hasPrefix('zoom_')) {
+    return {
+      title: 'Call Detected',
+      description: 'Zoom webhook received and forwarded by Cloudflare',
+      icon: <PhoneCall className="h-3.5 w-3.5" />,
+      iconWrap: 'bg-status-blue/15 text-status-blue',
+    };
+  }
+
+  // 5. Anything else.
+  return {
+    title: 'Related Events',
+    description: 'Events that share a meeting / call ID',
+    icon: <Layers className="h-3.5 w-3.5" />,
+    iconWrap: 'bg-surface-2 text-text-dim',
+  };
+}
+
+function GroupedEventRow({ group }: { group: EventGroup }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const all = [group.primary, ...group.others];
+  const total = all.length;
+
+  const sources = Array.from(
+    new Set(all.map(e => (e.source ?? '') as EventSource).filter(Boolean)),
+  );
+  const sev = dominantSeverity(all);
+  const sevStyle = GROUP_SEVERITY_STYLES[sev];
+  const kind = classifyGroup(all);
+
+  const meetingTopic =
+    all.find(e => e.meetingTopic)?.meetingTopic ?? all.find(e => e.callId)?.callId ?? null;
+  const clientName = all.find(e => e.clientName)?.clientName ?? null;
+  const callDate = all.find(e => e.callDate)?.callDate ?? null;
+
+  const times = all.map(e => toMs(e.createdAt));
+  const earliest = new Date(Math.min(...times));
+  const latest = new Date(Math.max(...times));
+  const spanMin = Math.max(0, Math.round((latest.getTime() - earliest.getTime()) / 60_000));
+
+  return (
+    <li
+      className={`overflow-hidden rounded-lg border bg-surface/40 transition ${
+        expanded ? 'border-accent/40 shadow-[0_0_0_1px_rgba(99,102,241,0.18)]' : 'border-border/70 hover:border-border-strong'
+      }`}>
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        className="grid w-full grid-cols-[150px_minmax(0,2fr)_minmax(0,1fr)_120px_120px] items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-2/60">
+        <div>
+          <div className="stat-num text-[12px] text-text">{relativeTime(latest)}</div>
+          <div className="stat-num text-[10.5px] text-text-muted">
+            {latest.toLocaleString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+            {spanMin > 0 && <span className="text-text-muted/70"> · {spanMin}m span</span>}
+          </div>
+        </div>
+
+        <div className="flex min-w-0 items-start gap-2.5">
+          <div className={`mt-0.5 shrink-0 rounded-md p-1 ${kind.iconWrap}`}>
+            {kind.icon}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-[13px] font-semibold text-text">{kind.title}</span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
+                <Layers className="h-3 w-3" />
+                {total} events
+              </span>
+              {expanded ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+              )}
+            </div>
+            <div className="mt-0.5 line-clamp-1 text-[12px] text-text-muted">
+              {kind.description}
+              {sources.length > 0 && (
+                <>
+                  {' · '}
+                  <span className="text-text-dim">{sources.join(' → ')}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          {clientName && (
+            <div className="truncate text-[12.5px] text-text">{clientName}</div>
+          )}
+          {meetingTopic && (
+            <div className="truncate text-[11.5px] text-text-muted">{meetingTopic}</div>
+          )}
+          {callDate && (
+            <div className="text-[10.5px] text-text-muted">
+              {new Date(callDate).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1">
+          {sources.map(s => (
+            <span
+              key={s}
+              className={
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
+                (SOURCE_BADGE[s] ?? SOURCE_BADGE.manual)
+              }>
+              {s}
+            </span>
+          ))}
+        </div>
+
+        <div className="text-right">
+          <span
+            className={
+              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
+              sevStyle.chip
+            }>
+            {sevStyle.icon}
+            {sev}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="relative border-t border-border/70 bg-bg/30">
+          {/* Vertical accent rail — overlay so it never shifts the row grid */}
+          <span
+            aria-hidden
+            className={`pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] ${sevStyle.rail}`}
+          />
+          {/* Children render edge-to-edge so their internal grid columns
+              line up exactly with the parent header's grid columns. */}
+          <ol className="flex flex-col divide-y divide-border/40">
+            {all.map(row => (
+              <li key={row.id} className="bg-bg/10">
+                <EventRowBody row={row} />
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </li>
   );
 }
