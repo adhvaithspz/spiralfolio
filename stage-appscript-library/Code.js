@@ -86,16 +86,25 @@ function doPost(e) {
       }
 
       // ── Deduplicate Zoom's double-fire ─────────────────────────
-      // Zoom sends both recording.completed AND recording.transcript_completed
-      // Use a date-scoped job key so the second event is ignored
-      const dateKey    = String(object.start_time || '').slice(0, 10).replace(/-/g, '') || 'nodate';
-      const jobKey     = 'WEBHOOK_JOB_' + String(meetingId) + '_' + dateKey;
-      const existingJob = PropertiesService.getScriptProperties().getProperty(jobKey);
+      // Zoom sends both recording.completed AND recording.transcript_completed.
+      // Check both the pending-job key AND the post-processing marker so that
+      // a late-arriving second event (after the first job was already processed
+      // and its WEBHOOK_JOB_ key deleted) is still blocked.
+      const dateKey        = String(object.start_time || '').slice(0, 10).replace(/-/g, '') || 'nodate';
+      const meetingDateKey = String(meetingId) + '_' + dateKey;
+      const jobKey         = 'WEBHOOK_JOB_'  + meetingDateKey;
+      const processedKey   = 'PROCESSED_'    + meetingDateKey;
+      const scriptProps    = PropertiesService.getScriptProperties();
+      const existingJob    = scriptProps.getProperty(jobKey);
+      const alreadyDone    = scriptProps.getProperty(processedKey);
 
-      if (existingJob) {
-        Logger.log('Job already queued for this meeting+date — ignoring duplicate event: ' + meetingTopic);
+      if (existingJob || alreadyDone) {
+        Logger.log('Job already ' + (existingJob ? 'queued' : 'processed') +
+                   ' for this meeting+date — ignoring duplicate event: ' + meetingTopic);
         return ContentService
-          .createTextOutput(JSON.stringify({ status: 'already_queued' }))
+          .createTextOutput(JSON.stringify({
+            status: existingJob ? 'already_queued' : 'already_processed'
+          }))
           .setMimeType(ContentService.MimeType.JSON);
       }
 
@@ -191,7 +200,10 @@ function scheduleWebhookProcessing(jobData) {
 }
 
 // ── Background job processor ───────────────────────────────────
-// Called by the time-based trigger. Processes all queued jobs.
+// Called by the time-based trigger every 5 minutes.
+// Processes ONE job per invocation to stay within Apps Script's
+// 6-minute execution limit. Remaining jobs are picked up on
+// subsequent trigger runs.
 function processWebhookJob() {
   const props    = PropertiesService.getScriptProperties();
   const allProps = props.getProperties();
@@ -205,46 +217,59 @@ function processWebhookJob() {
     return;
   }
 
-  Logger.log('Found ' + jobKeys.length + ' queued job(s)');
+  Logger.log('Found ' + jobKeys.length + ' queued job(s) — processing 1 this run');
 
-  jobKeys.forEach(function(jobKey) {
-    let jobData;
-    try {
-      jobData = JSON.parse(allProps[jobKey]);
-    } catch (e) {
-      Logger.log('Could not parse job ' + jobKey + ' — removing');
-      props.deleteProperty(jobKey);
-      return;
-    }
-
-    // Remove from queue immediately before processing
+  // Take only the first job; the trigger will handle the rest on future runs.
+  const jobKey = jobKeys[0];
+  let jobData;
+  try {
+    jobData = JSON.parse(allProps[jobKey]);
+  } catch (e) {
+    Logger.log('Could not parse job ' + jobKey + ' — removing');
     props.deleteProperty(jobKey);
+    return;
+  }
 
-    Logger.log('▶ Processing: ' + jobData.meetingTopic);
+  // Remove from queue before processing so a timeout doesn't leave a
+  // stuck key. (A new PROCESSED_ marker is written on success.)
+  props.deleteProperty(jobKey);
 
-    try {
-      processWithRetry(
-        jobData.meetingId,
-        jobData.meetingUuid || jobData.meetingId,
-        jobData.meetingTopic,
-        jobData.hostEmail,
-        {
-          callType:      jobData.callType      || 'client_weekly',
-          forceExternal: !!jobData.forceExternal,
-        },
-        2
-      );
-      Logger.log('✅ Job complete: ' + jobData.meetingTopic);
-    } catch (e) {
-      Logger.log('❌ Job failed: ' + jobData.meetingTopic + ' | ' + e);
-      logToSheet({
-        status:       'ERROR',
-        meetingTopic: jobData.meetingTopic,
-        hostEmail:    jobData.hostEmail || '',
-        error:        'Webhook job failed: ' + e.toString()
-      });
+  Logger.log('▶ Processing: ' + jobData.meetingTopic);
+
+  try {
+    processWithRetry(
+      jobData.meetingId,
+      jobData.meetingUuid || jobData.meetingId,
+      jobData.meetingTopic,
+      jobData.hostEmail,
+      {
+        callType:      jobData.callType      || 'client_weekly',
+        forceExternal: !!jobData.forceExternal,
+      },
+      2
+    );
+    Logger.log('✅ Job complete: ' + jobData.meetingTopic);
+
+    // Mark this meeting+date as fully processed so any late-arriving Zoom
+    // event (recording.transcript_completed arriving after this key was
+    // deleted) does not re-queue and double-post to SpiralFolio.
+    var datePart = jobData.startTime
+      ? String(jobData.startTime).slice(0, 10).replace(/-/g, '')
+      : 'nodate';
+    props.setProperty('PROCESSED_' + jobData.meetingId + '_' + datePart, new Date().toISOString());
+
+    if (jobKeys.length > 1) {
+      Logger.log((jobKeys.length - 1) + ' job(s) still queued — will process on next trigger run');
     }
-  });
+  } catch (e) {
+    Logger.log('❌ Job failed: ' + jobData.meetingTopic + ' | ' + e);
+    logToSheet({
+      status:       'ERROR',
+      meetingTopic: jobData.meetingTopic,
+      hostEmail:    jobData.hostEmail || '',
+      error:        'Webhook job failed: ' + e.toString()
+    });
+  }
 }
 
 function setupPermanentWebhookTrigger() {

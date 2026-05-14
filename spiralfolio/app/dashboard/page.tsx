@@ -14,7 +14,18 @@ import {
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
+  // TEMP DEBUG — confirm which DB the running server is reading.
+  // Remove once cache issue is diagnosed.
+  console.log('[DASHBOARD] DB URL =', process.env.TURSO_DATABASE_URL);
+
   const { items, recentActivity, portfolioCadence } = await getPortfolioData();
+
+  console.log('[DASHBOARD] live counts —', {
+    clients: items.length,
+    callsAcrossAllClients: items.reduce((a, i) => a + i.stats.callCount, 0),
+    openConcernsAcrossAllClients: items.reduce((a, i) => a + i.stats.openConcerns, 0),
+    winsAcrossAllClients: items.reduce((a, i) => a + (i.brain.wins?.length ?? 0), 0),
+  });
 
   const kpis = computePortfolioKPIs(items);
   const distribution = computeHealthDistribution(items);

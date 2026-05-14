@@ -44,6 +44,31 @@ function doPost(e) {
         error:        'Webhook received via Cloudflare: ' + event
       });
 
+      // Mirror to SpiralFolio admin event log. We log this as a
+      // `cloudflare_webhook_received` event since the payload reaches us
+      // exclusively through the Cloudflare worker — the Apps Script web app
+      // is never called directly by Zoom.
+      logSpiralFolioEvent({
+        eventType:    'cloudflare_webhook_received',
+        source:       'cloudflare',
+        severity:     'info',
+        message:      'Zoom ' + event + ' forwarded by Cloudflare worker — host: ' + hostEmail,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     object.start_time || null,
+        payload:      { event: event, hostEmail: hostEmail },
+      });
+      logSpiralFolioEvent({
+        eventType:    'zoom_webhook_received',
+        source:       'appscript',
+        severity:     'info',
+        message:      'Zoom event "' + event + '" received for ' + meetingTopic,
+        meetingId:    meetingId,
+        meetingTopic: meetingTopic,
+        callDate:     object.start_time || null,
+        payload:      { event: event, hostEmail: hostEmail },
+      });
+
       Logger.log('PM_AD_EMAILS count: ' + PM_AD_EMAILS.length);
       Logger.log('Host email: ' + hostEmail);
       Logger.log('Host is PM/AD: ' + PM_AD_EMAILS.some(function(e) {
@@ -86,16 +111,25 @@ function doPost(e) {
       }
 
       // ── Deduplicate Zoom's double-fire ─────────────────────────
-      // Zoom sends both recording.completed AND recording.transcript_completed
-      // Use a date-scoped job key so the second event is ignored
-      const dateKey    = String(object.start_time || '').slice(0, 10).replace(/-/g, '') || 'nodate';
-      const jobKey     = 'WEBHOOK_JOB_' + String(meetingId) + '_' + dateKey;
-      const existingJob = PropertiesService.getScriptProperties().getProperty(jobKey);
+      // Zoom sends both recording.completed AND recording.transcript_completed.
+      // Check both the pending-job key AND the post-processing marker so that
+      // a late-arriving second event (after the first job was already processed
+      // and its WEBHOOK_JOB_ key deleted) is still blocked.
+      const dateKey        = String(object.start_time || '').slice(0, 10).replace(/-/g, '') || 'nodate';
+      const meetingDateKey = String(meetingId) + '_' + dateKey;
+      const jobKey         = 'WEBHOOK_JOB_'  + meetingDateKey;
+      const processedKey   = 'PROCESSED_'    + meetingDateKey;
+      const scriptProps    = PropertiesService.getScriptProperties();
+      const existingJob    = scriptProps.getProperty(jobKey);
+      const alreadyDone    = scriptProps.getProperty(processedKey);
 
-      if (existingJob) {
-        Logger.log('Job already queued for this meeting+date — ignoring duplicate event: ' + meetingTopic);
+      if (existingJob || alreadyDone) {
+        Logger.log('Job already ' + (existingJob ? 'queued' : 'processed') +
+                   ' for this meeting+date — ignoring duplicate event: ' + meetingTopic);
         return ContentService
-          .createTextOutput(JSON.stringify({ status: 'already_queued' }))
+          .createTextOutput(JSON.stringify({
+            status: existingJob ? 'already_queued' : 'already_processed'
+          }))
           .setMimeType(ContentService.MimeType.JSON);
       }
 
@@ -191,7 +225,10 @@ function scheduleWebhookProcessing(jobData) {
 }
 
 // ── Background job processor ───────────────────────────────────
-// Called by the time-based trigger. Processes all queued jobs.
+// Called by the time-based trigger every 5 minutes.
+// Processes ONE job per invocation to stay within Apps Script's
+// 6-minute execution limit. Remaining jobs are picked up on
+// subsequent trigger runs.
 function processWebhookJob() {
   const props    = PropertiesService.getScriptProperties();
   const allProps = props.getProperties();
@@ -205,46 +242,59 @@ function processWebhookJob() {
     return;
   }
 
-  Logger.log('Found ' + jobKeys.length + ' queued job(s)');
+  Logger.log('Found ' + jobKeys.length + ' queued job(s) — processing 1 this run');
 
-  jobKeys.forEach(function(jobKey) {
-    let jobData;
-    try {
-      jobData = JSON.parse(allProps[jobKey]);
-    } catch (e) {
-      Logger.log('Could not parse job ' + jobKey + ' — removing');
-      props.deleteProperty(jobKey);
-      return;
-    }
-
-    // Remove from queue immediately before processing
+  // Take only the first job; the trigger will handle the rest on future runs.
+  const jobKey = jobKeys[0];
+  let jobData;
+  try {
+    jobData = JSON.parse(allProps[jobKey]);
+  } catch (e) {
+    Logger.log('Could not parse job ' + jobKey + ' — removing');
     props.deleteProperty(jobKey);
+    return;
+  }
 
-    Logger.log('▶ Processing: ' + jobData.meetingTopic);
+  // Remove from queue before processing so a timeout doesn't leave a
+  // stuck key. (A new PROCESSED_ marker is written on success.)
+  props.deleteProperty(jobKey);
 
-    try {
-      processWithRetry(
-        jobData.meetingId,
-        jobData.meetingUuid || jobData.meetingId,
-        jobData.meetingTopic,
-        jobData.hostEmail,
-        {
-          callType:      jobData.callType      || 'client_weekly',
-          forceExternal: !!jobData.forceExternal,
-        },
-        2
-      );
-      Logger.log('✅ Job complete: ' + jobData.meetingTopic);
-    } catch (e) {
-      Logger.log('❌ Job failed: ' + jobData.meetingTopic + ' | ' + e);
-      logToSheet({
-        status:       'ERROR',
-        meetingTopic: jobData.meetingTopic,
-        hostEmail:    jobData.hostEmail || '',
-        error:        'Webhook job failed: ' + e.toString()
-      });
+  Logger.log('▶ Processing: ' + jobData.meetingTopic);
+
+  try {
+    processWithRetry(
+      jobData.meetingId,
+      jobData.meetingUuid || jobData.meetingId,
+      jobData.meetingTopic,
+      jobData.hostEmail,
+      {
+        callType:      jobData.callType      || 'client_weekly',
+        forceExternal: !!jobData.forceExternal,
+      },
+      2
+    );
+    Logger.log('✅ Job complete: ' + jobData.meetingTopic);
+
+    // Mark this meeting+date as fully processed so any late-arriving Zoom
+    // event (recording.transcript_completed arriving after this key was
+    // deleted) does not re-queue and double-post to SpiralFolio.
+    var datePart = jobData.startTime
+      ? String(jobData.startTime).slice(0, 10).replace(/-/g, '')
+      : 'nodate';
+    props.setProperty('PROCESSED_' + jobData.meetingId + '_' + datePart, new Date().toISOString());
+
+    if (jobKeys.length > 1) {
+      Logger.log((jobKeys.length - 1) + ' job(s) still queued — will process on next trigger run');
     }
-  });
+  } catch (e) {
+    Logger.log('❌ Job failed: ' + jobData.meetingTopic + ' | ' + e);
+    logToSheet({
+      status:       'ERROR',
+      meetingTopic: jobData.meetingTopic,
+      hostEmail:    jobData.hostEmail || '',
+      error:        'Webhook job failed: ' + e.toString()
+    });
+  }
 }
 
 function setupPermanentWebhookTrigger() {
@@ -324,6 +374,16 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
     meetingTopic: meetingTopic,
     hostEmail:    hostEmail,
     error:        'Processing meeting ID: ' + meetingId
+  });
+
+  logSpiralFolioEvent({
+    eventType:    'appscript_processing_started',
+    source:       'appscript',
+    severity:     'info',
+    message:      'Apps Script started processing ' + meetingTopic,
+    meetingId:    meetingId,
+    meetingTopic: meetingTopic,
+    payload:      { hostEmail: hostEmail, callType: callType, forceExternal: forceExternal },
   });
 
   try {
@@ -434,8 +494,25 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       externalParticipants, futureContextSummary
     );
 
+    logSpiralFolioEvent({
+      eventType:    'coaching_doc_created',
+      source:       'appscript',
+      severity:     'success',
+      message:      'Coaching doc created for ' + clientName + ' (' + meetingTopic + ')',
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      clientName:   clientName,
+      callDate:     recording.start_time || null,
+      docUrl:       docUrl || null,
+      payload:      { pmName: pmName, adName: adName, callType: callType },
+    });
+
     if (CONFIG.ENABLE_SLACK_POSTING) {
-      sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, recording.start_time);
+      sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, recording.start_time, {
+        clientName: clientName,
+        meetingId:  meetingId,
+        docUrl:     docUrl,
+      });
     }
 
     // ── SpiralFolio brain update ────────────────────────────────
@@ -475,6 +552,24 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
     Logger.log('🎉 Coaching doc created successfully');
     Logger.log(docUrl);
 
+    logSpiralFolioEvent({
+      eventType:    'appscript_processing_completed',
+      source:       'appscript',
+      severity:     'success',
+      message:      'Apps Script finished processing ' + meetingTopic + ' in ' + duration.toFixed(1) + 's',
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      clientName:   clientName,
+      callDate:     recording.start_time || null,
+      docUrl:       docUrl || null,
+      payload:      {
+        durationSec:  duration,
+        pmName:       pmName,
+        adName:       adName,
+        callType:     callType,
+      },
+    });
+
     return { clientName, pmName, adName, docUrl, summary: futureContextSummary };
 
   } catch (error) {
@@ -484,6 +579,15 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       meetingTopic: meetingTopic,
       hostEmail:    hostEmail,
       error:        error.toString() + ' (after ' + duration.toFixed(1) + 's)'
+    });
+    logSpiralFolioEvent({
+      eventType:    'appscript_processing_error',
+      source:       'appscript',
+      severity:     'error',
+      message:      'Apps Script processing failed for ' + meetingTopic + ' — ' + error,
+      meetingId:    meetingId,
+      meetingTopic: meetingTopic,
+      payload:      { error: String(error), durationSec: duration, hostEmail: hostEmail },
     });
     throw error;
   }
