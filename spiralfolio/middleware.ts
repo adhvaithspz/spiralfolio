@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import {
   USER_COOKIE_NAME,
+  describeSsoConfigGaps,
   isGoogleSsoConfigured,
   readUserSession,
 } from '@/lib/google-auth';
@@ -68,14 +69,23 @@ export async function middleware(req: NextRequest) {
     // wires up env vars. In dev, allow through so the app is still usable
     // before you've set up OAuth.
     if (process.env.NODE_ENV === 'production') {
+      const gaps = describeSsoConfigGaps();
+      const gapList = gaps.length ? gaps.join(', ') : '(unknown)';
       if (isApi) {
         return NextResponse.json(
-          { error: 'Google SSO is not configured on this deployment.' },
+          {
+            error: 'Google SSO is not configured on this deployment.',
+            missing_env: gaps,
+          },
           { status: 503 },
         );
       }
       return new NextResponse(
-        'Google SSO is not configured on this deployment. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, NEXTAUTH_SECRET, and NEXTAUTH_URL in the Vercel project settings and redeploy.',
+        `Google SSO is not configured on this deployment.\n\n` +
+          `Missing or invalid env vars: ${gapList}\n\n` +
+          `Set them in the Vercel project settings (Production scope) and ` +
+          `trigger a redeploy. Vercel does NOT automatically rebuild when ` +
+          `env vars change — you must redeploy after adding them.`,
         { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } },
       );
     }

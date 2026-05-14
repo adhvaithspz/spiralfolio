@@ -92,6 +92,23 @@ export function isGoogleSsoConfigured(): boolean {
   return getOAuthConfig() !== null && getSessionSecret() !== null;
 }
 
+/**
+ * Returns the list of env-var names that are missing or unusable. Empty array
+ * means SSO is fully configured. Safe to expose to operators — only var names,
+ * never their values.
+ */
+export function describeSsoConfigGaps(): string[] {
+  const gaps: string[] = [];
+  if (!process.env.GOOGLE_CLIENT_ID) gaps.push('GOOGLE_CLIENT_ID');
+  if (!process.env.GOOGLE_CLIENT_SECRET) gaps.push('GOOGLE_CLIENT_SECRET');
+  const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (!baseUrl) gaps.push('NEXTAUTH_URL');
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) gaps.push('NEXTAUTH_SECRET');
+  else if (secret.length < 16) gaps.push('NEXTAUTH_SECRET (must be ≥16 chars)');
+  return gaps;
+}
+
 export function getRedirectUri(): string | null {
   const cfg = getOAuthConfig();
   if (!cfg) return null;
