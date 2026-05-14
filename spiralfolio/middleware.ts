@@ -51,13 +51,24 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  const isApi = pathname.startsWith('/api/');
+
+  // Apps Script (and any other M2M caller) uses the SPIRALFOLIO_API_KEY
+  // bearer token. This check runs BEFORE the SSO gate so the integration
+  // keeps working even before Google SSO is configured — Google SSO is
+  // for browser sessions only.
+  if (isApi && hasApiBearerToken(req)) {
+    return NextResponse.next();
+  }
+
   if (!isGoogleSsoConfigured()) {
-    // In production, missing SSO config must NEVER fail open — that would
-    // expose the whole app. Block everything with a clear message and let
-    // the operator wire up env vars. In dev, allow through so the app is
-    // still usable before you've set up OAuth.
+    // In production, missing SSO config must NEVER fail open for browser
+    // routes — that would expose the whole app. Block everything (except
+    // the M2M API calls above) with a clear message until the operator
+    // wires up env vars. In dev, allow through so the app is still usable
+    // before you've set up OAuth.
     if (process.env.NODE_ENV === 'production') {
-      if (pathname.startsWith('/api/')) {
+      if (isApi) {
         return NextResponse.json(
           { error: 'Google SSO is not configured on this deployment.' },
           { status: 503 },
@@ -68,12 +79,6 @@ export async function middleware(req: NextRequest) {
         { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } },
       );
     }
-    return NextResponse.next();
-  }
-
-  const isApi = pathname.startsWith('/api/');
-
-  if (isApi && hasApiBearerToken(req)) {
     return NextResponse.next();
   }
 
