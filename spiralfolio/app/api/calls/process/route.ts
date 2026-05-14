@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { checkApiKey } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { calls, documents } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { nanoid } from '@/lib/utils/nanoid';
 import { getClient, getClientBrain } from '@/lib/db/queries';
 import { applyCallSynthesis } from '@/lib/db/mutations';
@@ -57,6 +57,29 @@ export async function POST(req: Request) {
 
   const client = await getClient(clientId);
   if (!client) return NextResponse.json({ error: 'client not found' }, { status: 404 });
+
+  // Idempotency guard: if a non-failed call already exists for this
+  // client + date + type, return the existing record instead of creating
+  // a duplicate. This catches double-posts from the Apps Script retry
+  // logic as a second line of defence.
+  const [duplicate] = await db
+    .select({ id: calls.id, status: calls.status })
+    .from(calls)
+    .where(
+      and(
+        eq(calls.clientId, clientId),
+        eq(calls.callDate, callDate),
+        eq(calls.callType, callType)
+      )
+    )
+    .limit(1);
+
+  if (duplicate && duplicate.status !== 'error') {
+    return NextResponse.json(
+      { error: 'duplicate_call', call_id: duplicate.id, message: 'A call with this date and type already exists for this client.' },
+      { status: 409 }
+    );
+  }
 
   const callId = nanoid();
   const now = new Date();
