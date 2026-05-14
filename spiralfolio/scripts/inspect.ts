@@ -52,7 +52,8 @@ async function main() {
   for (const t of TABLES) {
     try {
       const r = await client.execute(`SELECT COUNT(*) AS n FROM ${t};`);
-      const n = Number((r.rows[0] as { n: number | string }).n);
+      const row = r.rows[0] as unknown as { n: number | string } | undefined;
+      const n = Number(row?.n ?? 0);
       console.log(`  ${t.padEnd(14)} ${n.toLocaleString().padStart(8)}`);
     } catch (err) {
       const msg = (err as { message?: string } | null)?.message ?? '';
