@@ -1,15 +1,17 @@
 import { redirect } from 'next/navigation';
 import { getAdminSession } from '@/lib/admin-auth';
-import { listDistinctEventTypes, listEvents, summarizeEvents } from '@/lib/db/events';
+import { listEvents, summarizePipelineParents } from '@/lib/db/events';
 import { listClients } from '@/lib/db/queries';
 import { EventLogExplorer } from '@/components/admin/EventLogExplorer';
-import type { EventSeverity, EventSource } from '@/lib/db/schema';
-import { mergeEventTypeFilters, parseEventGroupsParam } from '@/lib/admin/event-filters';
+import {
+  mergeEventTypeFilters,
+  parseAdminSinceDay,
+  parseAdminStatusParam,
+  parseAdminUntilDayInclusive,
+  parseEventGroupsParam,
+} from '@/lib/admin/event-filters';
 
 export const dynamic = 'force-dynamic';
-
-const VALID_SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
-const VALID_SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 function parseList<T extends string>(value: string | undefined, allowed?: readonly T[]): T[] {
   if (!value) return [];
@@ -17,11 +19,6 @@ function parseList<T extends string>(value: string | undefined, allowed?: readon
   return allowed ? parts.filter(p => (allowed as readonly string[]).includes(p)) : parts;
 }
 
-function parseDate(value: string | undefined): Date | undefined {
-  if (!value) return undefined;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? undefined : d;
-}
 
 export default async function AdminEventsPage({
   searchParams,
@@ -42,19 +39,18 @@ export default async function AdminEventsPage({
   const eventGroups = parseEventGroupsParam(get('event_groups'));
   const mergedEventTypes = mergeEventTypeFilters(eventTypesRaw, eventGroups);
 
-  const sources = parseList<EventSource>(get('sources'), VALID_SOURCES);
-  const severities = parseList<EventSeverity>(get('severities'), VALID_SEVERITIES);
+  const { severities, pipelineSkipped } = parseAdminStatusParam(get('severities'));
   const clientId = get('client_id') || undefined;
   const search = get('q') || undefined;
-  const since = parseDate(get('since'));
-  const until = parseDate(get('until'));
+  const since = parseAdminSinceDay(get('since'));
+  const until = parseAdminUntilDayInclusive(get('until'));
 
   const filters = {
     eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
     eventGroups: eventGroups.length ? eventGroups : undefined,
     eventTypesIndividual: eventTypesRaw.length ? eventTypesRaw : undefined,
-    sources: sources.length ? sources : undefined,
     severities: severities.length ? severities : undefined,
+    pipelineSkipped: pipelineSkipped || undefined,
     clientId,
     search,
     since,
@@ -62,10 +58,9 @@ export default async function AdminEventsPage({
     limit: 100,
   };
 
-  const [{ rows, nextCursor, total }, knownEventTypes, summary, allClients] = await Promise.all([
+  const [{ rows, nextCursor }, summary, allClients] = await Promise.all([
     listEvents(filters),
-    listDistinctEventTypes(),
-    summarizeEvents({ since, until }),
+    summarizePipelineParents(filters),
     listClients(),
   ]);
 
@@ -73,16 +68,16 @@ export default async function AdminEventsPage({
     <EventLogExplorer
       initialRows={rows}
       initialNextCursor={nextCursor ? `${nextCursor.createdAtMs}_${nextCursor.id}` : null}
-      total={total}
       summary={summary}
-      knownEventTypes={knownEventTypes}
       clients={allClients.map(c => ({ id: c.id, name: c.name }))}
       username={session.username}
       initialFilters={{
         eventTypes: eventTypesRaw,
         eventGroups,
-        sources,
-        severities,
+        statusValues: [
+          ...severities,
+          ...(pipelineSkipped ? (['skipped'] as const) : []),
+        ],
         clientId: clientId ?? '',
         search: search ?? '',
         since: since ? since.toISOString().slice(0, 10) : '',

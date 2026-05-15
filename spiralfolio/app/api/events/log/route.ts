@@ -5,7 +5,7 @@ import type { EventSeverity, EventSource } from '@/lib/db/schema';
 
 export const dynamic = 'force-dynamic';
 
-const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
+const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom', 'slack'];
 const SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 /**
@@ -20,7 +20,7 @@ const SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
  * Body shape (all fields optional except `event_type`):
  *   {
  *     event_type:           string,        // e.g. "slack_dm_sent"
- *     source:               string,        // "appscript" | "cloudflare" | ...
+ *     source:               string,        // "appscript" | "slack" | "cloudflare" | ...
  *     severity:             string,        // "info" | "success" | ...
  *     message:              string,
  *     client_name:          string,

@@ -4,12 +4,10 @@ import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Activity,
-  AlertTriangle,
   Brain,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  CircleDot,
   Filter,
   Layers,
   Loader2,
@@ -19,7 +17,6 @@ import {
   Slash,
   Sparkles,
   ShieldAlert,
-  ShieldCheck,
   XCircle,
 } from 'lucide-react';
 import { relativeTime } from '@/lib/utils';
@@ -29,55 +26,92 @@ import { EventRowBody } from './EventRow';
 import { AdminLogoutButton } from './AdminLogoutButton';
 import type { EventLog, EventSeverity, EventSource } from '@/lib/db/schema';
 import type { EventCountSummary } from '@/lib/db/events';
-import { EVENT_GROUP_IDS, EVENT_GROUP_META, type EventGroupId } from '@/lib/admin/event-filters';
+import {
+  EVENT_GROUP_IDS,
+  EVENT_GROUP_META,
+  SKIP_PIPELINE_STATUS_TOKEN,
+  eventTypePipelineStage,
+  resolveEventDisplaySource,
+  type EventGroupId,
+  type PipelineStageId,
+} from '@/lib/admin/event-filters';
+import {
+  brainIngestChannel,
+  groupRelatedEvents,
+  isClientBrainPipelineEvent,
+  mergeStageGroupsForGroupFilter,
+  pipelineStatusWordForStage,
+  splitClusterIntoStages,
+  toMs,
+  typesInSelectedEventGroups,
+  type PipelineStatusWord,
+  type StagedPipelineGroup,
+} from '@/lib/admin/pipeline-event-groups';
+import { PipelineStatusBadge, PIPELINE_STATUS_RAIL } from '@/components/admin/PipelineStatusBadge';
+
+type StatusFilterValue = EventSeverity | typeof SKIP_PIPELINE_STATUS_TOKEN;
 
 type Filters = {
   eventTypes: string[];
   eventGroups: EventGroupId[];
-  sources: EventSource[];
-  severities: EventSeverity[];
+  statusValues: StatusFilterValue[];
   clientId: string;
   search: string;
   since: string;
   until: string;
 };
 
-const ALL_SOURCES: { value: EventSource; label: string }[] = [
-  { value: 'cloudflare', label: 'Cloudflare' },
-  { value: 'appscript', label: 'Apps Script' },
-  { value: 'spiralfolio', label: 'SpiralFolio' },
-  { value: 'manual', label: 'Manual' },
-  { value: 'zoom', label: 'Zoom' },
+const STATUS_FILTER_OPTIONS: {
+  value: StatusFilterValue;
+  label: string;
+  /** Query-token hint for operators sharing URLs */
+  title?: string;
+}[] = [
+  { value: 'success', label: 'Success' },
+  { value: 'error', label: 'Error' },
+  { value: SKIP_PIPELINE_STATUS_TOKEN, label: 'Skipped', title: 'severities=skipped' },
 ];
 
-const ALL_SEVERITIES: { value: EventSeverity; label: string }[] = [
-  { value: 'success', label: 'Success' },
-  { value: 'info', label: 'Info' },
-  { value: 'warning', label: 'Warning' },
-  { value: 'error', label: 'Error' },
-];
+function statusValuesToUrlParam(values: StatusFilterValue[]): string {
+  const severities = values.filter((v): v is EventSeverity => v !== SKIP_PIPELINE_STATUS_TOKEN);
+  const skipped = values.includes(SKIP_PIPELINE_STATUS_TOKEN);
+  const parts: string[] = [...severities];
+  if (skipped) parts.push(SKIP_PIPELINE_STATUS_TOKEN);
+  return parts.join(',');
+}
+
+/** Any narrowing filter — list uses pipeline stage shells only (expand for raw lines). */
+function explorerFiltersActive(f: Filters): boolean {
+  return (
+    f.eventTypes.length > 0 ||
+    f.eventGroups.length > 0 ||
+    f.statusValues.length > 0 ||
+    Boolean(f.clientId.trim()) ||
+    Boolean(f.search.trim()) ||
+    Boolean(f.since) ||
+    Boolean(f.until)
+  );
+}
 
 export function EventLogExplorer({
   initialRows,
   initialNextCursor,
-  total,
-  summary,
-  knownEventTypes,
+  summary: summaryProp,
   clients,
   username,
   initialFilters,
 }: {
   initialRows: EventLog[];
   initialNextCursor: string | null;
-  total: number;
   summary: EventCountSummary;
-  knownEventTypes: string[];
   clients: { id: string; name: string }[];
   username: string;
   initialFilters: Filters;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  const [summary, setSummary] = React.useState<EventCountSummary>(summaryProp);
 
   const [rows, setRows] = React.useState<EventLog[]>(initialRows);
   const [cursor, setCursor] = React.useState<string | null>(initialNextCursor);
@@ -87,15 +121,26 @@ export function EventLogExplorer({
   const [draft, setDraft] = React.useState<Filters>(initialFilters);
 
   const groups = React.useMemo(() => {
-    let base = grouping ? groupRelatedEvents(rows) : rows.map(r => ({ primary: r, others: [] as EventLog[] }));
+    let staged: StagedEventGroup[] = grouping
+      ? groupRelatedEvents(rows).flatMap(splitClusterIntoStages)
+      : rows.map(r => ({
+          primary: r,
+          others: [] as EventLog[],
+          stageId: eventTypePipelineStage(r.eventType),
+        }));
     if (initialFilters.eventGroups.length) {
-      base = mergeClustersSameMeetingForGroupFilter(base, initialFilters.eventGroups);
+      staged = mergeStageGroupsForGroupFilter(staged, initialFilters.eventGroups);
     }
-    return base;
+    staged.sort((a, b) => toMs(b.primary.createdAt) - toMs(a.primary.createdAt));
+    return staged;
   }, [rows, grouping, initialFilters.eventGroups]);
 
   /** When a pipeline-group chip is applied, those matches should list as group shells only; expand for raw events. */
   const useGroupFilterShell = initialFilters.eventGroups.length > 0;
+
+  React.useEffect(() => {
+    setSummary(summaryProp);
+  }, [summaryProp]);
 
   React.useEffect(() => {
     setRows(initialRows);
@@ -115,8 +160,7 @@ export function EventLogExplorer({
       };
       setOrDel('event_types', next.eventTypes.join(','));
       setOrDel('event_groups', next.eventGroups.join(','));
-      setOrDel('sources', next.sources.join(','));
-      setOrDel('severities', next.severities.join(','));
+      setOrDel('severities', statusValuesToUrlParam(next.statusValues));
       setOrDel('client_id', next.clientId);
       setOrDel('q', next.search);
       setOrDel('since', next.since);
@@ -156,9 +200,11 @@ export function EventLogExplorer({
         const data = (await res.json()) as {
           rows: EventLog[];
           nextCursor: string | null;
+          summary: EventCountSummary;
         };
         setRows(hydrateRows(data.rows));
         setCursor(data.nextCursor);
+        if (data.summary) setSummary(data.summary);
       }
     } finally {
       setPending(false);
@@ -178,6 +224,9 @@ export function EventLogExplorer({
     [draft, initialFilters],
   );
 
+  /** With filters, API merges peer lines per meeting — always show stage shells, never a lone flat row. */
+  const forceGroupedShells = explorerFiltersActive(initialFilters);
+
   return (
     <div className="flex h-[calc(100dvh-6.5rem)] max-h-[calc(100dvh-6.5rem)] flex-col gap-5 overflow-hidden">
       <header className="shrink-0 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -187,11 +236,12 @@ export function EventLogExplorer({
             Pipeline event log
           </div>
           <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-text">
-            {total.toLocaleString()} event{total === 1 ? '' : 's'}
+            {summary.total.toLocaleString()} meeting{summary.total === 1 ? '' : 's'}
           </h1>
           <p className="mt-0.5 text-[12.5px] text-text-muted">
-            Zoom webhooks, Apps Script processing, Slack DMs, coaching docs, and SpiralFolio brain
-            updates — newest first.
+            Each row is one pipeline stage for that meeting (detect → analyse → brain). Expand for raw
+            webhook and Apps Script lines — newest first. With filters applied, sibling lines for the same
+            meeting are merged into those stages. Summary counts each meeting once (worst stage outcome).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -232,15 +282,13 @@ export function EventLogExplorer({
         <FilterPanel
         draft={draft}
         setDraft={setDraft}
-        knownEventTypes={knownEventTypes}
         clients={clients}
         onApply={() => applyFilters(draft)}
         onReset={() =>
           applyFilters({
             eventTypes: [],
             eventGroups: [],
-            sources: [],
-            severities: [],
+            statusValues: [],
             clientId: '',
             search: '',
             since: '',
@@ -273,12 +321,13 @@ export function EventLogExplorer({
                 const shellForGroupFilter =
                   useGroupFilterShell &&
                   clusterOnlyContainsTypesFromSelectedGroups(group, initialFilters.eventGroups);
-                const showGroupedRow = shellForGroupFilter || group.others.length > 0;
+                const showGroupedRow =
+                  forceGroupedShells || shellForGroupFilter || group.others.length > 0;
                 return showGroupedRow ? (
-                  <GroupedEventRow key={group.primary.id} group={group} />
+                  <GroupedEventRow key={`${group.stageId}-${group.primary.id}`} group={group} />
                 ) : (
                   <li
-                    key={group.primary.id}
+                    key={`${group.stageId}-${group.primary.id}`}
                     className="overflow-hidden rounded-lg border border-border/70 bg-surface/40 transition hover:border-border-strong">
                     <EventRowBody row={group.primary} />
                   </li>
@@ -310,13 +359,12 @@ function hydrateRows(rows: EventLog[]): EventLog[] {
 
 function SummaryStrip({ summary }: { summary: EventCountSummary }) {
   const tiles = [
-    { label: 'Errors', value: summary.bySeverity.error, icon: ShieldAlert, accent: 'text-status-red' },
-    { label: 'Warnings', value: summary.bySeverity.warning, icon: AlertTriangle, accent: 'text-status-yellow' },
-    { label: 'Successes', value: summary.bySeverity.success, icon: CheckCircle2, accent: 'text-status-green' },
-    { label: 'Info', value: summary.bySeverity.info, icon: CircleDot, accent: 'text-status-blue' },
+    { label: 'Errors', value: summary.byStatus.Error, icon: ShieldAlert, accent: 'text-status-red' },
+    { label: 'Skipped', value: summary.byStatus.Skipped, icon: Slash, accent: 'text-text-muted' },
+    { label: 'Success', value: summary.byStatus.Success, icon: CheckCircle2, accent: 'text-status-green' },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {tiles.map(t => (
         <div
           key={t.label}
@@ -339,7 +387,6 @@ function SummaryStrip({ summary }: { summary: EventCountSummary }) {
 function FilterPanel({
   draft,
   setDraft,
-  knownEventTypes,
   clients,
   onApply,
   onReset,
@@ -347,7 +394,6 @@ function FilterPanel({
 }: {
   draft: Filters;
   setDraft: React.Dispatch<React.SetStateAction<Filters>>;
-  knownEventTypes: string[];
   clients: { id: string; name: string }[];
   onApply: () => void;
   onReset: () => void;
@@ -423,20 +469,13 @@ function FilterPanel({
         </div>
       </div>
 
-      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
-        <ChipGroup
-          label="Source"
-          layout="scroll"
-          options={ALL_SOURCES}
-          selected={draft.sources}
-          onToggle={v => setDraft(d => ({ ...d, sources: toggleArray(d.sources, v) }))}
-        />
+      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
         <ChipGroup
           label="Status"
           layout="scroll"
-          options={ALL_SEVERITIES}
-          selected={draft.severities}
-          onToggle={v => setDraft(d => ({ ...d, severities: toggleArray(d.severities, v) }))}
+          options={STATUS_FILTER_OPTIONS}
+          selected={draft.statusValues}
+          onToggle={v => setDraft(d => ({ ...d, statusValues: toggleArray(d.statusValues, v) }))}
         />
         <div className="flex min-w-0 flex-col gap-1.5">
           <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
@@ -451,6 +490,7 @@ function FilterPanel({
                   <button
                     key={id}
                     type="button"
+                    title={`event_groups=${id}`}
                     onClick={() =>
                       setDraft(d => ({
                         ...d,
@@ -464,28 +504,6 @@ function FilterPanel({
                         : 'border-border bg-surface-2 text-text-dim hover:border-border-strong hover:text-text')
                     }>
                     {meta.label}
-                  </button>
-                );
-              })}
-              {knownEventTypes.map(t => {
-                const active = draft.eventTypes.includes(t);
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() =>
-                      setDraft(d => ({
-                        ...d,
-                        eventTypes: toggleArray(d.eventTypes, t),
-                      }))
-                    }
-                    className={
-                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition ' +
-                      (active
-                        ? 'border-accent/60 bg-accent-soft text-accent'
-                        : 'border-border bg-surface-2 text-text-dim hover:border-border-strong hover:text-text')
-                    }>
-                    {t}
                   </button>
                 );
               })}
@@ -514,7 +532,7 @@ function ChipGroup<T extends string>({
   layout = 'wrap',
 }: {
   label: string;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; title?: string }[];
   selected: T[];
   onToggle: (v: T) => void;
   layout?: 'wrap' | 'scroll';
@@ -541,6 +559,7 @@ function ChipGroup<T extends string>({
             <button
               key={o.value}
               type="button"
+              title={o.title}
               onClick={() => onToggle(o.value)}
               className={
                 'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition ' +
@@ -557,76 +576,13 @@ function ChipGroup<T extends string>({
   );
 }
 
-// ── Grouping ────────────────────────────────────────────────────────────────
-//
-// Many pipeline events arrive in clusters — e.g. a Zoom webhook is forwarded
-// by Cloudflare and then immediately mirrored by Apps Script, producing two
-// separate rows for the same logical event. Or a single call import used to
-// produce three rows (transcript_uploaded → call_imported → brain_changed).
-// We collapse rows that share the same meeting / call key AND occurred within
-// a short time window into a single visual "group", keeping all the underlying
-// rows accessible behind an expand toggle so nothing is hidden permanently.
+// Grouping logic is imported from `@/lib/admin/pipeline-event-groups` (shared with server-side summaries).
 
-type EventGroup = {
-  primary: EventLog;
-  others: EventLog[]; // older events in the same group, ordered as in the source list
-};
-
-const GROUP_WINDOW_MS = 5 * 60 * 1000;
-
-function meetingKey(row: EventLog): string | null {
-  if (row.callId) return `call:${row.callId}`;
-  if (row.meetingId) return `meeting:${row.meetingId}`;
-  if (row.meetingTopic) {
-    const norm = row.meetingTopic.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (norm.length >= 3) return `topic:${norm}`;
-  }
-  return null;
-}
-
-function toMs(d: Date | string): number {
-  return (typeof d === 'string' ? new Date(d) : d).getTime();
-}
-
-function groupRelatedEvents(rows: EventLog[]): EventGroup[] {
-  const groups: EventGroup[] = [];
-
-  for (const row of rows) {
-    const key = meetingKey(row);
-    if (!key) {
-      groups.push({ primary: row, others: [] });
-      continue;
-    }
-
-    const ts = toMs(row.createdAt);
-    const match = groups.find(g => {
-      if (meetingKey(g.primary) !== key) return false;
-      const all = [g.primary, ...g.others];
-      return all.some(e => Math.abs(toMs(e.createdAt) - ts) <= GROUP_WINDOW_MS);
-    });
-
-    if (match) {
-      // rows arrive newest-first, so any row reaching here is older than primary
-      match.others.push(row);
-    } else {
-      groups.push({ primary: row, others: [] });
-    }
-  }
-
-  return groups;
-}
-
-function typesInSelectedEventGroups(groupIds: EventGroupId[]): Set<string> {
-  const s = new Set<string>();
-  for (const id of groupIds) {
-    for (const t of EVENT_GROUP_META[id].types) s.add(t);
-  }
-  return s;
-}
+type StagedEventGroup = StagedPipelineGroup;
 
 /** True when every event in the cluster is one of the types implied by the selected pipeline group chips. */
 function clusterOnlyContainsTypesFromSelectedGroups(
-  cluster: EventGroup,
+  cluster: StagedEventGroup,
   selectedGroupIds: EventGroupId[],
 ): boolean {
   if (!selectedGroupIds.length) return false;
@@ -637,178 +593,183 @@ function clusterOnlyContainsTypesFromSelectedGroups(
   return true;
 }
 
-/**
- * `groupRelatedEvents` only links rows within a short time window, so the same
- * call can produce multiple islands (e.g. several skips minutes apart). When a
- * pipeline group chip is active, merge every cluster that shares the same meeting
- * key and only contains those groups' event types — expand then lists all rows.
- */
-function mergeClustersSameMeetingForGroupFilter(
-  groups: EventGroup[],
-  selectedGroupIds: EventGroupId[],
-): EventGroup[] {
-  if (!selectedGroupIds.length) return groups;
-
-  const allowed = typesInSelectedEventGroups(selectedGroupIds);
-  const mergeableByKey = new Map<string, Map<string, EventLog>>();
-  const unmerged: EventGroup[] = [];
-
-  for (const g of groups) {
-    const all = [g.primary, ...g.others];
-    const key = meetingKey(g.primary);
-    const allAllowed = all.every(e => allowed.has(e.eventType));
-    if (key && allAllowed) {
-      let bucket = mergeableByKey.get(key);
-      if (!bucket) {
-        bucket = new Map();
-        mergeableByKey.set(key, bucket);
-      }
-      for (const e of all) {
-        bucket.set(e.id, e);
-      }
-    } else {
-      unmerged.push(g);
-    }
-  }
-
-  const merged: EventGroup[] = [];
-  for (const byId of mergeableByKey.values()) {
-    const events = [...byId.values()].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
-    const [primary, ...others] = events;
-    if (primary) merged.push({ primary, others });
-  }
-
-  return [...merged, ...unmerged].sort((a, b) => toMs(b.primary.createdAt) - toMs(a.primary.createdAt));
-}
-
-const SEVERITY_RANK: Record<string, number> = { error: 4, warning: 3, success: 2, info: 1 };
-
-function dominantSeverity(events: EventLog[]): EventSeverity {
-  let bestRank = 0;
-  let best: EventSeverity = 'info';
-  for (const e of events) {
-    const sev = (e.severity ?? 'info') as EventSeverity;
-    const rank = SEVERITY_RANK[sev] ?? 0;
-    if (rank > bestRank) {
-      bestRank = rank;
-      best = sev;
-    }
-  }
-  return best;
-}
-
-const GROUP_SEVERITY_STYLES: Record<EventSeverity, { chip: string; icon: React.ReactNode; rail: string }> = {
-  success: {
-    chip: 'border-status-green/30 bg-status-green/10 text-status-green',
-    icon: <ShieldCheck className="h-3 w-3" />,
-    rail: 'bg-status-green/40',
-  },
-  info: {
-    chip: 'border-status-blue/30 bg-status-blue/10 text-status-blue',
-    icon: <CircleDot className="h-3 w-3" />,
-    rail: 'bg-status-blue/40',
-  },
-  warning: {
-    chip: 'border-status-yellow/30 bg-status-yellow/10 text-status-yellow',
-    icon: <AlertTriangle className="h-3 w-3" />,
-    rail: 'bg-status-yellow/40',
-  },
-  error: {
-    chip: 'border-status-red/30 bg-status-red/10 text-status-red',
-    icon: <XCircle className="h-3 w-3" />,
-    rail: 'bg-status-red/50',
-  },
-};
-
 const SOURCE_BADGE: Record<EventSource, string> = {
   cloudflare: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
   appscript: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  slack: 'border-fuchsia-500/35 bg-fuchsia-500/12 text-fuchsia-300',
   spiralfolio: 'border-accent/30 bg-accent-soft text-accent',
   manual: 'border-border-strong bg-surface-2 text-text-dim',
   zoom: 'border-cyan-500/35 bg-cyan-500/12 text-cyan-300',
 };
 
 /**
- * A group's "kind" is derived from the event types present in it. We name the
- * cluster after the most downstream / meaningful thing that happened so the
- * header reads as a sentence in the operator's mental model rather than as a
- * generic "related events" lump.
+ * Stage header copy — parent row title is always the pipeline stage; description
+ * summarizes outcomes (Slack, brain, skip reason) so operators don't need to expand.
  */
-type GroupKind = {
+type StageHeaderModel = {
   title: string;
   description: string;
   icon: React.ReactNode;
-  iconWrap: string; // tailwind classes for the small icon tile
+  iconWrap: string;
+  statusWord: PipelineStatusWord;
+  statusBadge: React.ReactNode;
 };
 
-function classifyGroup(events: EventLog[]): GroupKind {
+function describeStageSummary(stageId: PipelineStageId, events: EventLog[]): string {
   const types = new Set(events.map(e => e.eventType));
-  const has = (...needles: string[]) => needles.some(n => types.has(n));
-  const hasPrefix = (prefix: string) => Array.from(types).some(t => t.startsWith(prefix));
 
-  // 1. Client brain mutation — the SpiralFolio side of the pipeline.
-  if (has('brain_changed', 'call_imported', 'transcript_uploaded')) {
-    return {
-      title: 'Client Brain Updated',
-      description: 'Transcript ingested and client brain refreshed',
-      icon: <Brain className="h-3.5 w-3.5" />,
-      iconWrap: 'bg-accent-soft text-accent',
-    };
+  switch (stageId) {
+    case 'call_detected':
+      return 'Zoom notified this meeting — expand for each webhook hop';
+    case 'call_skipped': {
+      const skip = events.find(e => e.eventType === 'appscript_processing_skipped');
+      const base = skip?.message?.trim() || 'Apps Script did not queue processing';
+      const hasWebhooks = events.some(
+        e =>
+          e.eventType === 'zoom_webhook_received' || e.eventType === 'cloudflare_webhook_received',
+      );
+      const hasStarted = events.some(e => e.eventType === 'appscript_processing_started');
+      let line = hasWebhooks ? `${base} · includes Zoom / Cloudflare webhook hops` : base;
+      if (hasStarted) line += ' · Apps Script started before skip';
+      return line;
+    }
+    case 'call_analysed': {
+      const parts: string[] = [];
+      if (types.has('coaching_doc_created')) parts.push('Coaching doc generated');
+      if (types.has('slack_dm_sent')) parts.push('Slack DM sent');
+      if (types.has('slack_dm_failed')) parts.push('Slack DM failed');
+      if (types.has('slack_dm_skipped')) parts.push('Slack DM skipped');
+      if (types.has('appscript_processing_completed')) parts.push('Apps Script finished');
+      if (types.has('appscript_processing_error')) parts.push('Apps Script error');
+      let line = parts.length ? parts.join(' · ') : 'Apps Script coaching steps — expand for detail';
+      if (events.some(isClientBrainPipelineEvent)) {
+        const ch = brainIngestChannel(events);
+        if (ch === 'manual_upload') {
+          line += ' · Brain ingest: manual SpiralFolio upload';
+        } else if (ch === 'integration') {
+          line += ' · Brain ingest: automated (Apps Script → SpiralFolio)';
+        }
+        if (types.has('call_processing_error')) {
+          line += ' · SpiralFolio import failed';
+        } else if (types.has('call_imported')) {
+          const row = events.find(e => e.eventType === 'call_imported');
+          if (row?.message?.trim()) line += ` · ${row.message.trim()}`;
+        } else if (types.has('transcript_uploaded')) {
+          const tu = events.find(e => e.eventType === 'transcript_uploaded');
+          if (tu?.message?.trim()) line += ` · ${tu.message.trim()}`;
+        }
+      }
+      return line;
+    }
+    case 'brain_manual': {
+      if (types.has('call_processing_error')) {
+        let s = 'SpiralFolio hit an error while importing';
+        const ch = brainIngestChannel(events);
+        if (ch === 'manual_upload') s += ' · Manual SpiralFolio upload';
+        else if (ch === 'integration') s += ' · Apps Script → SpiralFolio';
+        return s;
+      }
+      if (types.has('call_imported')) {
+        const row = events.find(e => e.eventType === 'call_imported');
+        let s = row?.message?.trim() || 'Call synthesized and brain updated';
+        const ch = brainIngestChannel(events);
+        if (ch === 'manual_upload') s += ' · Manual SpiralFolio upload';
+        else if (ch === 'integration') s += ' · Apps Script → SpiralFolio';
+        return s;
+      }
+      const tu = events.find(e => e.eventType === 'transcript_uploaded');
+      if (tu) {
+        let s = tu.message?.trim() || 'Transcript posted to SpiralFolio';
+        const ch = brainIngestChannel(events);
+        if (ch === 'manual_upload') s += ' · Manual SpiralFolio upload';
+        else if (ch === 'integration') s += ' · Apps Script → SpiralFolio';
+        return s;
+      }
+      return 'SpiralFolio-side activity — expand for detail';
+    }
+    case 'related':
+    default:
+      return 'Other events tied to this meeting';
   }
-
-  // 2. Coaching doc + Slack DM dispatch.
-  if (
-    has('coaching_doc_created', 'appscript_processing_completed', 'appscript_processing_started') ||
-    hasPrefix('slack_dm_')
-  ) {
-    return {
-      title: 'Coaching Pipeline Ran',
-      description: 'Apps Script generated coaching feedback and sent DMs',
-      icon: <Sparkles className="h-3.5 w-3.5" />,
-      iconWrap: 'bg-emerald-500/15 text-emerald-300',
-    };
-  }
-
-  // 3. Skipped at the webhook stage (host check, internal, etc).
-  if (has('appscript_processing_skipped')) {
-    return {
-      title: 'Call Skipped',
-      description: 'Webhook received but not queued for processing',
-      icon: <Slash className="h-3.5 w-3.5" />,
-      iconWrap: 'bg-surface-2 text-text-muted',
-    };
-  }
-
-  // 4. Webhook arrival — Zoom delivered an event via Cloudflare.
-  if (hasPrefix('cloudflare_') || hasPrefix('zoom_')) {
-    return {
-      title: 'Call Detected',
-      description: 'Zoom webhook received and forwarded by Cloudflare',
-      icon: <PhoneCall className="h-3.5 w-3.5" />,
-      iconWrap: 'bg-status-blue/15 text-status-blue',
-    };
-  }
-
-  // 5. Anything else.
-  return {
-    title: 'Related Events',
-    description: 'Events that share a meeting / call ID',
-    icon: <Layers className="h-3.5 w-3.5" />,
-    iconWrap: 'bg-surface-2 text-text-dim',
-  };
 }
 
-function GroupedEventRow({ group }: { group: EventGroup }) {
+function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHeaderModel {
+  const summary = describeStageSummary(stageId, events);
+  const statusWord = pipelineStatusWordForStage(stageId, events);
+  const statusBadge = <PipelineStatusBadge word={statusWord} />;
+
+  if (stageId === 'related') {
+    return {
+      title: 'Related events',
+      description: summary,
+      icon: <Layers className="h-3.5 w-3.5" />,
+      iconWrap: 'bg-surface-2 text-text-dim',
+      statusWord,
+      statusBadge,
+    };
+  }
+
+  const meta = EVENT_GROUP_META[stageId];
+
+  switch (stageId) {
+    case 'call_skipped':
+      return {
+        title: meta.label,
+        description: summary,
+        icon: <Slash className="h-3.5 w-3.5" />,
+        iconWrap: 'bg-surface-2 text-text-muted',
+        statusWord,
+        statusBadge,
+      };
+    case 'call_detected':
+      return {
+        title: meta.label,
+        description: summary,
+        icon: <PhoneCall className="h-3.5 w-3.5" />,
+        iconWrap: 'bg-status-blue/15 text-status-blue',
+        statusWord,
+        statusBadge,
+      };
+    case 'call_analysed': {
+      const mergedBrain = events.some(isClientBrainPipelineEvent);
+      return {
+        title: mergedBrain ? 'Call analysed and brain updated' : meta.label,
+        description: summary,
+        icon: mergedBrain ? (
+          <span className="flex gap-0.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            <Brain className="h-3.5 w-3.5 text-accent" />
+          </span>
+        ) : (
+          <Sparkles className="h-3.5 w-3.5" />
+        ),
+        iconWrap: 'bg-emerald-500/15 text-emerald-300',
+        statusWord,
+        statusBadge,
+      };
+    }
+    case 'brain_manual':
+      return {
+        title: meta.label,
+        description: summary,
+        icon: <Brain className="h-3.5 w-3.5" />,
+        iconWrap: 'bg-accent-soft text-accent',
+        statusWord,
+        statusBadge,
+      };
+  }
+}
+
+function GroupedEventRow({ group }: { group: StagedEventGroup }) {
   const [expanded, setExpanded] = React.useState(false);
   const all = [group.primary, ...group.others];
   const total = all.length;
 
   const sources = Array.from(
-    new Set(all.map(e => (e.source ?? '') as EventSource).filter(Boolean)),
-  );
-  const sev = dominantSeverity(all);
-  const sevStyle = GROUP_SEVERITY_STYLES[sev];
-  const kind = classifyGroup(all);
+    new Set(all.map(e => resolveEventDisplaySource(e)).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b));
+  const header = buildStageHeader(group.stageId, all);
+  const railClass = PIPELINE_STATUS_RAIL[header.statusWord];
 
   const meetingTopic =
     all.find(e => e.meetingTopic)?.meetingTopic ?? all.find(e => e.callId)?.callId ?? null;
@@ -843,15 +804,15 @@ function GroupedEventRow({ group }: { group: EventGroup }) {
         </div>
 
         <div className="flex min-w-0 items-start gap-2.5">
-          <div className={`mt-0.5 shrink-0 rounded-md p-1 ${kind.iconWrap}`}>
-            {kind.icon}
+          <div className={`mt-0.5 shrink-0 rounded-md p-1 ${header.iconWrap}`}>
+            {header.icon}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="truncate text-[13px] font-semibold text-text">{kind.title}</span>
+              <span className="truncate text-[13px] font-semibold text-text">{header.title}</span>
               <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
                 <Layers className="h-3 w-3" />
-                {total} events
+                {total} {total === 1 ? 'event' : 'events'}
               </span>
               {expanded ? (
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" />
@@ -859,12 +820,12 @@ function GroupedEventRow({ group }: { group: EventGroup }) {
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
               )}
             </div>
-            <div className="mt-0.5 line-clamp-1 text-[12px] text-text-muted">
-              {kind.description}
+            <div className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">
+              {header.description}
               {sources.length > 0 && (
                 <>
                   {' · '}
-                  <span className="text-text-dim">{sources.join(' → ')}</span>
+                  <span className="text-text-dim">{sources.join(', ')}</span>
                 </>
               )}
             </div>
@@ -902,23 +863,7 @@ function GroupedEventRow({ group }: { group: EventGroup }) {
           ))}
         </div>
 
-        <div className="text-right">
-          {kind.title === 'Call Skipped' ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-text-muted">
-              <Slash className="h-3 w-3" />
-              Skipped
-            </span>
-          ) : (
-            <span
-              className={
-                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
-                sevStyle.chip
-              }>
-              {sevStyle.icon}
-              {sev}
-            </span>
-          )}
-        </div>
+        <div className="text-right">{header.statusBadge}</div>
       </button>
 
       {expanded && (
@@ -926,7 +871,7 @@ function GroupedEventRow({ group }: { group: EventGroup }) {
           {/* Vertical accent rail — overlay so it never shifts the row grid */}
           <span
             aria-hidden
-            className={`pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] ${sevStyle.rail}`}
+            className={`pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] ${railClass}`}
           />
           {/* Children render edge-to-edge so their internal grid columns
               line up exactly with the parent header's grid columns. */}

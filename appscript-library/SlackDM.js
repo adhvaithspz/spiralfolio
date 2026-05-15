@@ -459,7 +459,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: 'DM skipped: no coaching content for "' + name + '"' });
       logSpiralFolioEvent({
         eventType:        'slack_dm_skipped',
-        source:           'appscript',
+        source:           'slack',
         severity:         'info',
         message:          'No attributable coaching content for ' + name,
         meetingId:        ctx.meetingId || null,
@@ -488,7 +488,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: 'DM skipped: no handle for "' + name + '"' });
       logSpiralFolioEvent({
         eventType:      'slack_dm_skipped',
-        source:         'appscript',
+        source:         'slack',
         severity:       'warning',
         message:        'No Slack handle configured for ' + name,
         meetingId:      ctx.meetingId || null,
@@ -509,7 +509,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed: user not found for ' + handleEntry.email });
       logSpiralFolioEvent({
         eventType:           'slack_dm_failed',
-        source:              'appscript',
+        source:              'slack',
         severity:            'warning',
         message:             'Slack user not found for ' + handleEntry.email,
         meetingId:           ctx.meetingId || null,
@@ -531,7 +531,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed: could not open channel for ' + name });
       logSpiralFolioEvent({
         eventType:           'slack_dm_failed',
-        source:              'appscript',
+        source:              'slack',
         severity:            'warning',
         message:             'Could not open DM channel for ' + name + ' (' + handleEntry.email + ')',
         meetingId:           ctx.meetingId || null,
@@ -565,7 +565,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'INFO', meetingTopic: meetingTopic, error: '✅ DM sent to ' + name });
       logSpiralFolioEvent({
         eventType:           'slack_dm_sent',
-        source:              'appscript',
+        source:              'slack',
         severity:            'success',
         message:             'Coaching DM sent to ' + name + ' (' + handleEntry.email + ')',
         meetingId:           ctx.meetingId || null,
@@ -586,7 +586,7 @@ function sendIndividualFeedbackDMs(feedback, meetingTopic, transcript, callDate,
       logToSheet({ status: 'WARNING', meetingTopic: meetingTopic, error: 'DM failed for ' + name });
       logSpiralFolioEvent({
         eventType:           'slack_dm_failed',
-        source:              'appscript',
+        source:              'slack',
         severity:            'error',
         message:             'chat.postMessage failed for ' + name + ' (' + handleEntry.email + ')',
         meetingId:           ctx.meetingId || null,

@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle,
   Brain,
   ChevronRight,
   CircleDot,
@@ -18,36 +17,15 @@ import {
   Video,
   XCircle,
 } from 'lucide-react';
-import type { EventLog, EventSeverity, EventSource } from '@/lib/db/schema';
+import type { EventLog, EventSource } from '@/lib/db/schema';
 import { formatDate, relativeTime } from '@/lib/utils';
 import { safeParse } from '@/lib/utils/json';
-
-const SEVERITY_STYLES: Record<EventSeverity, { dot: string; chip: string; icon: React.ReactNode }> = {
-  success: {
-    dot: 'bg-status-green ring-status-green/25',
-    chip: 'bg-status-green/10 text-status-green border-status-green/30',
-    icon: <ShieldCheck className="h-3 w-3" />,
-  },
-  info: {
-    dot: 'bg-status-blue ring-status-blue/25',
-    chip: 'bg-status-blue/10 text-status-blue border-status-blue/30',
-    icon: <CircleDot className="h-3 w-3" />,
-  },
-  warning: {
-    dot: 'bg-status-yellow ring-status-yellow/25',
-    chip: 'bg-status-yellow/10 text-status-yellow border-status-yellow/30',
-    icon: <AlertTriangle className="h-3 w-3" />,
-  },
-  error: {
-    dot: 'bg-status-red ring-status-red/25',
-    chip: 'bg-status-red/10 text-status-red border-status-red/30',
-    icon: <XCircle className="h-3 w-3" />,
-  },
-};
+import { resolveEventDisplaySource } from '@/lib/admin/event-filters';
 
 const SOURCE_STYLES: Record<EventSource, string> = {
   cloudflare: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
   appscript: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  slack: 'border-fuchsia-500/35 bg-fuchsia-500/12 text-fuchsia-300',
   spiralfolio: 'border-accent/30 bg-accent-soft text-accent',
   manual: 'border-border-strong bg-surface-2 text-text-dim',
   zoom: 'border-cyan-500/35 bg-cyan-500/12 text-cyan-300',
@@ -87,8 +65,8 @@ export function EventRow({ row }: { row: EventLog }) {
  */
 export function EventRowBody({ row, badge }: { row: EventLog; badge?: React.ReactNode }) {
   const [open, setOpen] = React.useState(false);
-  const sev = SEVERITY_STYLES[(row.severity ?? 'info') as EventSeverity] ?? SEVERITY_STYLES.info;
-  const src = SOURCE_STYLES[(row.source ?? 'spiralfolio') as EventSource] ?? SOURCE_STYLES.spiralfolio;
+  const displaySource = resolveEventDisplaySource(row);
+  const src = SOURCE_STYLES[displaySource] ?? SOURCE_STYLES.spiralfolio;
 
   const created = typeof row.createdAt === 'string' ? new Date(row.createdAt) : row.createdAt;
 
@@ -149,19 +127,15 @@ export function EventRowBody({ row, badge }: { row: EventLog; badge?: React.Reac
               'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
               src
             }>
-            {row.source}
+            {displaySource}
           </span>
         </div>
 
         <div className="text-right">
-          <span
-            className={
-              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
-              sev.chip
-            }>
-            {sev.icon}
-            {row.severity}
+          <span className="text-[11px] text-text-muted" aria-hidden>
+            —
           </span>
+          <span className="sr-only">Pipeline status applies to the stage group only</span>
         </div>
       </button>
 
@@ -222,6 +196,7 @@ function RowQuickFacts({ row }: { row: EventLog }) {
 
 function RowDetails({ row }: { row: EventLog }) {
   const payload = row.payload ? safeParse<unknown>(row.payload, null) : null;
+  const displaySource = resolveEventDisplaySource(row);
 
   return (
     <div className="border-t border-border bg-bg/40 px-4 py-3">
@@ -230,8 +205,18 @@ function RowDetails({ row }: { row: EventLog }) {
           rows={[
             ['Event ID', <span key="id" className="font-mono text-[11px]">{row.id}</span>],
             ['Event type', <span key="t" className="font-mono text-[11px]">{row.eventType}</span>],
-            ['Source', row.source],
-            ['Status', row.severity],
+            [
+              'Source',
+              displaySource === row.source ? (
+                displaySource
+              ) : (
+                <span key="src">
+                  {displaySource}
+                  <span className="text-text-muted"> (stored: {row.source})</span>
+                </span>
+              ),
+            ],
+            ['Logged severity', row.severity ?? 'info'],
             ['Client ID', row.clientId ?? '—'],
             ['Client name', row.clientName ?? '—'],
             ['Meeting topic', row.meetingTopic ?? '—'],

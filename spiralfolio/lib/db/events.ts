@@ -5,7 +5,16 @@ import { eventLogs, type EventLog, type EventSeverity, type EventSource } from '
 import { nanoid } from '@/lib/utils/nanoid';
 import { safeStringify } from '@/lib/utils/json';
 import type { EventGroupId } from '@/lib/admin/event-filters';
-import { CALL_SKIPPED_UPSTREAM_EVENT_TYPES } from '@/lib/admin/event-filters';
+import {
+  CALL_SKIPPED_UPSTREAM_EVENT_TYPES,
+  EVENT_GROUP_META,
+  SKIP_PIPELINE_STATUS_EVENT_TYPES,
+} from '@/lib/admin/event-filters';
+import {
+  aggregatePipelineParents,
+  meetingKey,
+  type PipelineStatusWord,
+} from '@/lib/admin/pipeline-event-groups';
 
 /**
  * Append-only audit log helper. Every interesting moment in the call-coaching
@@ -81,8 +90,9 @@ export type ListEventsFilters = {
   eventGroups?: EventGroupId[];
   /** `event_types` param only; explicit type chips vs group expansion. */
   eventTypesIndividual?: string[];
-  sources?: EventSource[];
   severities?: EventSeverity[];
+  /** OR-combined with `severities` — Apps Script skip + intentional Slack DM skip rows. */
+  pipelineSkipped?: boolean;
   clientId?: string;
   search?: string; // matches against meetingTopic, clientName, message, slackRecipient
   since?: Date;
@@ -114,30 +124,26 @@ function applyHiddenTypeFilter(conds: ReturnType<typeof eq>[]) {
 /** Pair Zoom/Cloudflare rows with a skip on the same call/meeting (±2h). Timestamps are ms (Drizzle sqlite `timestamp`). */
 const CALL_SKIP_UPSTREAM_CORRELATION_MS = 2 * 60 * 60 * 1000;
 
-function pushMergedEventTypeCondition(
-  conds: ReturnType<typeof eq>[],
+/** Build `(event_type IN …)` or correlated webhook EXISTS when `call_skipped` is selected. */
+function sqlForMergedEventTypes(
   mergedTypes: string[],
-  eventGroups: EventGroupId[] | undefined,
-  individualTypes: string[] | undefined,
+  eventGroups: EventGroupId[],
+  individualTypes: Set<string>,
 ) {
-  const groups = eventGroups ?? [];
-  const indiv = new Set(individualTypes ?? []);
   const upstreamList = CALL_SKIPPED_UPSTREAM_EVENT_TYPES as readonly string[];
 
   const callSkippedPipeline =
-    groups.includes('call_skipped') && mergedTypes.some(t => upstreamList.includes(t));
+    eventGroups.includes('call_skipped') && mergedTypes.some(t => upstreamList.includes(t));
 
   if (!callSkippedPipeline) {
-    conds.push(sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})` as never);
-    return;
+    return sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})`;
   }
 
-  const upstreamGroupOnly = upstreamList.filter(t => mergedTypes.includes(t) && !indiv.has(t));
+  const upstreamGroupOnly = upstreamList.filter(t => mergedTypes.includes(t) && !individualTypes.has(t));
   const simpleTypes = mergedTypes.filter(t => !upstreamGroupOnly.includes(t));
 
   if (upstreamGroupOnly.length === 0) {
-    conds.push(sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})` as never);
-    return;
+    return sql`${eventLogs.eventType} IN (${sql.join(mergedTypes.map(t => sql`${t}`), sql`, `)})`;
   }
 
   const upstreamIn = sql.join(upstreamGroupOnly.map(t => sql`${t}`), sql`, `);
@@ -159,23 +165,135 @@ function pushMergedEventTypeCondition(
   );
 
   if (simpleTypes.length > 0) {
-    conds.push(
-      or(
-        sql`${eventLogs.eventType} IN (${sql.join(simpleTypes.map(t => sql`${t}`), sql`, `)})`,
-        correlatedUpstream,
-      ) as never,
+    return or(
+      sql`${eventLogs.eventType} IN (${sql.join(simpleTypes.map(t => sql`${t}`), sql`, `)})`,
+      correlatedUpstream,
     );
+  }
+  return correlatedUpstream;
+}
+
+function pushMergedEventTypeCondition(
+  conds: ReturnType<typeof eq>[],
+  mergedTypes: string[],
+  eventGroups: EventGroupId[] | undefined,
+  individualTypes: string[] | undefined,
+) {
+  const groups = eventGroups ?? [];
+  const indiv = new Set(individualTypes ?? []);
+  const wantsBrainManual = groups.includes('brain_manual');
+  const brainSet = new Set(EVENT_GROUP_META.brain_manual.types);
+
+  let manualBrainTypes: string[] = [];
+  let restTypes = mergedTypes;
+
+  if (wantsBrainManual) {
+    manualBrainTypes = mergedTypes.filter(t => brainSet.has(t));
+    restTypes = mergedTypes.filter(t => !brainSet.has(t));
+  }
+
+  const clauses: ReturnType<typeof sql>[] = [];
+
+  if (manualBrainTypes.length > 0) {
+    clauses.push(
+      and(
+        sql`${eventLogs.eventType} IN (${sql.join(manualBrainTypes.map(t => sql`${t}`), sql`, `)})`,
+        eq(eventLogs.source, 'manual'),
+      ) as ReturnType<typeof sql>,
+    );
+  }
+
+  if (restTypes.length > 0) {
+    clauses.push(sqlForMergedEventTypes(restTypes, groups, indiv) as ReturnType<typeof sql>);
+  }
+
+  if (clauses.length === 0) return;
+  if (clauses.length === 1) {
+    conds.push(clauses[0] as never);
   } else {
-    conds.push(correlatedUpstream as never);
+    conds.push(or(...clauses) as never);
   }
 }
 
-export async function listEvents(filters: ListEventsFilters = {}): Promise<ListEventsResult> {
-  const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+/** True when operators narrowed the log — expand seeds to full meeting/call/topic clusters for grouping. */
+export function shouldExpandClustersForFilters(filters: ListEventsFilters): boolean {
+  return !!(
+    (filters.eventTypes?.length ?? 0) > 0 ||
+    (filters.eventGroups?.length ?? 0) > 0 ||
+    (filters.severities?.length ?? 0) > 0 ||
+    filters.pipelineSkipped ||
+    (filters.clientId && filters.clientId.length > 0) ||
+    (filters.search && filters.search.trim().length > 0) ||
+    filters.since !== undefined ||
+    filters.until !== undefined
+  );
+}
+
+function collectClusterKeyParts(rows: EventLog[]): {
+  meetingIds: string[];
+  callIds: string[];
+  topicsNorm: string[];
+} {
+  const meetingIds = new Set<string>();
+  const callIds = new Set<string>();
+  const topicsNorm = new Set<string>();
+  for (const r of rows) {
+    const k = meetingKey(r);
+    if (!k) continue;
+    if (k.startsWith('meeting:')) meetingIds.add(k.slice('meeting:'.length));
+    else if (k.startsWith('call:')) callIds.add(k.slice('call:'.length));
+    else if (k.startsWith('topic:')) topicsNorm.add(k.slice('topic:'.length));
+  }
+  return {
+    meetingIds: [...meetingIds],
+    callIds: [...callIds],
+    topicsNorm: [...topicsNorm],
+  };
+}
+
+function mergeDedupeSortEvents(seeds: EventLog[], peers: EventLog[]): EventLog[] {
+  const map = new Map<string, EventLog>();
+  for (const r of peers) map.set(r.id, r);
+  for (const r of seeds) map.set(r.id, r);
+  return [...map.values()].sort((a, b) => {
+    const dt = b.createdAt.getTime() - a.createdAt.getTime();
+    if (dt !== 0) return dt;
+    return b.id.localeCompare(a.id);
+  });
+}
+
+async function fetchClusterPeersForRows(
+  seedRows: EventLog[],
+  bounds: Pick<ListEventsFilters, 'since' | 'until' | 'clientId'>,
+): Promise<EventLog[]> {
+  const { meetingIds, callIds, topicsNorm } = collectClusterKeyParts(seedRows);
+  if (!meetingIds.length && !callIds.length && !topicsNorm.length) return [];
 
   const conds = [] as ReturnType<typeof eq>[];
   applyHiddenTypeFilter(conds);
+  if (bounds.since) conds.push(gte(eventLogs.createdAt, bounds.since));
+  if (bounds.until) conds.push(lte(eventLogs.createdAt, bounds.until));
+  if (bounds.clientId) conds.push(eq(eventLogs.clientId, bounds.clientId));
 
+  const keyParts: ReturnType<typeof sql>[] = [];
+  if (meetingIds.length) {
+    keyParts.push(
+      sql`${eventLogs.meetingId} IN (${sql.join(meetingIds.map(id => sql`${id}`), sql`, `)})`,
+    );
+  }
+  if (callIds.length) {
+    keyParts.push(sql`${eventLogs.callId} IN (${sql.join(callIds.map(id => sql`${id}`), sql`, `)})`);
+  }
+  for (const topic of topicsNorm) {
+    keyParts.push(sql`lower(trim(${eventLogs.meetingTopic})) = ${topic}`);
+  }
+
+  conds.push(or(...keyParts) as never);
+
+  return db.select().from(eventLogs).where(and(...conds));
+}
+
+function pushAdminEventLogFilters(conds: ReturnType<typeof eq>[], filters: ListEventsFilters): void {
   if (filters.eventTypes && filters.eventTypes.length) {
     pushMergedEventTypeCondition(
       conds,
@@ -184,11 +302,22 @@ export async function listEvents(filters: ListEventsFilters = {}): Promise<ListE
       filters.eventTypesIndividual,
     );
   }
-  if (filters.sources && filters.sources.length) {
-    conds.push(sql`${eventLogs.source} IN (${sql.join(filters.sources.map(s => sql`${s}`), sql`, `)})` as never);
-  }
-  if (filters.severities && filters.severities.length) {
-    conds.push(sql`${eventLogs.severity} IN (${sql.join(filters.severities.map(s => sql`${s}`), sql`, `)})` as never);
+  const severityClause =
+    filters.severities && filters.severities.length
+      ? sql`${eventLogs.severity} IN (${sql.join(filters.severities.map(s => sql`${s}`), sql`, `)})`
+      : null;
+  const skipClause = filters.pipelineSkipped
+    ? sql`${eventLogs.eventType} IN (${sql.join(
+        SKIP_PIPELINE_STATUS_EVENT_TYPES.map(t => sql`${t}`),
+        sql`, `,
+      )})`
+    : null;
+  if (severityClause && skipClause) {
+    conds.push(or(severityClause, skipClause) as never);
+  } else if (severityClause) {
+    conds.push(severityClause as never);
+  } else if (skipClause) {
+    conds.push(skipClause as never);
   }
   if (filters.clientId) {
     conds.push(eq(eventLogs.clientId, filters.clientId));
@@ -212,6 +341,14 @@ export async function listEvents(filters: ListEventsFilters = {}): Promise<ListE
       ) as never,
     );
   }
+}
+
+export async function listEvents(filters: ListEventsFilters = {}): Promise<ListEventsResult> {
+  const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+
+  const conds = [] as ReturnType<typeof eq>[];
+  applyHiddenTypeFilter(conds);
+  pushAdminEventLogFilters(conds, filters);
 
   // Cursor-based pagination on (createdAt DESC, id DESC).
   if (filters.cursor) {
@@ -249,8 +386,14 @@ export async function listEvents(filters: ListEventsFilters = {}): Promise<ListE
     }
   }
 
+  let rowsOut = trimmed;
+  if (shouldExpandClustersForFilters(filters) && trimmed.length > 0) {
+    const peers = await fetchClusterPeersForRows(trimmed, filters);
+    rowsOut = mergeDedupeSortEvents(trimmed, peers);
+  }
+
   return {
-    rows: trimmed,
+    rows: rowsOut,
     nextCursor,
     total: Number(totalRows[0]?.n ?? 0),
   };
@@ -266,56 +409,34 @@ export async function listDistinctEventTypes(): Promise<string[]> {
 }
 
 export type EventCountSummary = {
+  /** Meetings / clustered runs (not raw log lines). */
   total: number;
-  bySeverity: Record<EventSeverity, number>;
-  bySource: Record<EventSource, number>;
+  /** Per-meeting rollup — Success / Error / Skipped only. */
+  byStatus: Record<PipelineStatusWord, number>;
 };
 
-export async function summarizeEvents(filters: ListEventsFilters = {}): Promise<EventCountSummary> {
+/** Severity buckets + total parent rows for the admin strip — same filters as {@link listEvents}. */
+export async function summarizePipelineParents(filters: ListEventsFilters = {}): Promise<EventCountSummary> {
   const conds = [] as ReturnType<typeof eq>[];
   applyHiddenTypeFilter(conds);
-  if (filters.since) conds.push(gte(eventLogs.createdAt, filters.since));
-  if (filters.until) conds.push(lte(eventLogs.createdAt, filters.until));
-
+  pushAdminEventLogFilters(conds, filters);
   const where = conds.length ? and(...conds) : undefined;
 
-  const [bySev, bySrc, totalRow] = await Promise.all([
-    db
-      .select({
-        severity: eventLogs.severity,
-        n: sql<number>`count(*)`,
-      })
-      .from(eventLogs)
-      .where(where)
-      .groupBy(eventLogs.severity),
-    db
-      .select({
-        source: eventLogs.source,
-        n: sql<number>`count(*)`,
-      })
-      .from(eventLogs)
-      .where(where)
-      .groupBy(eventLogs.source),
-    db.select({ n: sql<number>`count(*)` }).from(eventLogs).where(where),
-  ]);
+  const seedRows = await db
+    .select()
+    .from(eventLogs)
+    .where(where)
+    .orderBy(desc(eventLogs.createdAt), desc(eventLogs.id));
 
-  const bySeverity = { info: 0, success: 0, warning: 0, error: 0 } as Record<EventSeverity, number>;
-  for (const r of bySev) {
-    const k = (r.severity ?? 'info') as EventSeverity;
-    bySeverity[k] = Number(r.n);
+  let rows = seedRows;
+  if (shouldExpandClustersForFilters(filters) && seedRows.length > 0) {
+    const peers = await fetchClusterPeersForRows(seedRows, filters);
+    rows = mergeDedupeSortEvents(seedRows, peers);
   }
 
-  const bySource = { spiralfolio: 0, appscript: 0, cloudflare: 0, manual: 0, zoom: 0 } as Record<EventSource, number>;
-  const sourceKeys = new Set(Object.keys(bySource));
-  for (const r of bySrc) {
-    const raw = (r.source ?? 'spiralfolio') as string;
-    const k = (sourceKeys.has(raw) ? raw : 'spiralfolio') as EventSource;
-    bySource[k] += Number(r.n);
-  }
-
+  const agg = aggregatePipelineParents(rows, filters.eventGroups ?? []);
   return {
-    total: Number(totalRow[0]?.n ?? 0),
-    bySeverity,
-    bySource,
+    total: agg.totalParents,
+    byStatus: agg.byStatus,
   };
 }

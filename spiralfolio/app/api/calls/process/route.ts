@@ -10,6 +10,7 @@ import { safeStringify } from '@/lib/utils/json';
 import { synthesizeCall, buildPriorContext } from '@/lib/ai/synthesis';
 import { extractDocument } from '@/lib/ai/documents';
 import { logEvent } from '@/lib/db/events';
+import type { EventSource } from '@/lib/db/schema';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -24,8 +25,16 @@ export async function POST(req: Request) {
   let callType: string;
   let filename: string;
 
+  /** Multipart = SpiralFolio UI upload; JSON = programmatic (typically Apps Script → SpiralFolio). */
+  let ingestSource: EventSource = 'spiralfolio';
+  let meetingIdLog: string | null = null;
+  let meetingTopicLog: string | null = null;
+
   const contentType = req.headers.get('content-type') ?? '';
-  if (contentType.includes('multipart/form-data')) {
+  const isMultipart = contentType.includes('multipart/form-data');
+
+  if (isMultipart) {
+    ingestSource = 'manual';
     const fd = await req.formData();
     clientId = String(fd.get('client_id') ?? '').trim();
     callDate = String(fd.get('call_date') ?? new Date().toISOString().slice(0, 10));
@@ -50,6 +59,10 @@ export async function POST(req: Request) {
     callDate = String(body.call_date ?? body.callDate ?? new Date().toISOString().slice(0, 10));
     callType = String(body.call_type ?? body.callType ?? 'weekly');
     filename = `Transcript ${callDate}`;
+    const mid = String(body.meeting_id ?? body.meetingId ?? '').trim();
+    meetingIdLog = mid || null;
+    const mtopic = String(body.meeting_topic ?? body.meetingTopic ?? '').trim();
+    meetingTopicLog = mtopic || null;
   }
 
   if (!clientId || !transcript) {
@@ -78,13 +91,15 @@ export async function POST(req: Request) {
   if (duplicate && duplicate.status !== 'error') {
     await logEvent({
       eventType: 'transcript_uploaded',
-      source: 'manual',
+      source: ingestSource,
       severity: 'warning',
       message: `Duplicate transcript ignored — call already exists for ${client.name} on ${callDate} (${callType})`,
       clientId,
       clientName: client.name,
       callId: duplicate.id,
       callDate,
+      meetingId: meetingIdLog,
+      meetingTopic: meetingTopicLog,
       payload: { duplicate: true, filename, transcriptLength: transcript.length },
     });
     return NextResponse.json(
@@ -107,13 +122,15 @@ export async function POST(req: Request) {
 
   await logEvent({
     eventType: 'transcript_uploaded',
-    source: 'manual',
+    source: ingestSource,
     severity: 'info',
     message: `Transcript received — ${client.name} · ${callDate} (${callType})`,
     clientId,
     clientName: client.name,
     callId,
     callDate,
+    meetingId: meetingIdLog,
+    meetingTopic: meetingTopicLog,
     payload: { filename, transcriptLength: transcript.length, phase: 'queued' },
   });
 
@@ -190,12 +207,15 @@ export async function POST(req: Request) {
 
     await logEvent({
       eventType: 'call_imported',
+      source: ingestSource,
       severity: 'success',
       message: `Imported ${callType} call for ${client.name} (${callDate}) — ${brainSummary}`,
       clientId,
       clientName: client.name,
       callId,
       callDate,
+      meetingId: meetingIdLog,
+      meetingTopic: meetingTopicLog,
       payload: {
         filename,
         transcriptLength: transcript.length,
@@ -218,12 +238,15 @@ export async function POST(req: Request) {
     await db.update(calls).set({ status: 'error' }).where(eq(calls.id, callId));
     await logEvent({
       eventType: 'call_processing_error',
+      source: ingestSource,
       severity: 'error',
       message: `Processing failed for ${client.name} (${callDate}): ${(err as Error).message}`,
       clientId,
       clientName: client.name,
       callId,
       callDate,
+      meetingId: meetingIdLog,
+      meetingTopic: meetingTopicLog,
       payload: { error: (err as Error).message, stack: (err as Error).stack ?? null },
     });
     return NextResponse.json({ error: (err as Error).message, call_id: callId }, { status: 500 });

@@ -67,6 +67,8 @@ function resolveSpiraFolioClientId(clientName) {
  * @param {string} opts.callType      "kickoff" | "weekly" | "ad-hoc" | "review"
  * @param {string} [opts.pmName]      optional, used only for logging
  * @param {string} [opts.adName]      optional, used only for logging
+ * @param {string} [opts.meetingId]   Zoom meeting id — forwarded so SpiralFolio logs correlate with Apps Script
+ * @param {string} [opts.meetingTopic]
  */
 function postToSpiralFolio(opts) {
   var props   = PropertiesService.getScriptProperties();
@@ -101,12 +103,19 @@ function postToSpiralFolio(opts) {
   };
   var callType = typeMap[opts.callType] || opts.callType || 'weekly';
 
-  var payload = JSON.stringify({
+  var payloadObj = {
     client_id:       clientId,
     transcript_text: opts.transcript || '',
     call_date:       callDate,
     call_type:       callType,
-  });
+  };
+  if (opts.meetingId) {
+    payloadObj.meeting_id = String(opts.meetingId);
+  }
+  if (opts.meetingTopic) {
+    payloadObj.meeting_topic = String(opts.meetingTopic);
+  }
+  var payload = JSON.stringify(payloadObj);
 
   try {
     var response = UrlFetchApp.fetch(baseUrl + '/api/calls/process', {
@@ -145,7 +154,7 @@ function postToSpiralFolio(opts) {
  * @param {Object} opts
  * @param {string} opts.eventType                e.g. 'slack_dm_sent'
  * @param {string} [opts.severity]               'info' | 'success' | 'warning' | 'error'
- * @param {string} [opts.source]                 'appscript' (default) | 'cloudflare'
+ * @param {string} [opts.source]                 'appscript' (default) | 'cloudflare' | 'slack'
  * @param {string} [opts.message]                Free-form summary line
  * @param {string} [opts.clientName]             Resolved client name
  * @param {string} [opts.clientId]               Pre-resolved SpiralFolio client_id

@@ -169,7 +169,7 @@ export const users = sqliteTable('users', {
 export const eventLogs = sqliteTable('event_logs', {
   id: text('id').primaryKey(),
   eventType: text('event_type').notNull(),
-  source: text('source').notNull().default('spiralfolio'), // spiralfolio | appscript | cloudflare | manual | zoom
+  source: text('source').notNull().default('spiralfolio'), // spiralfolio | appscript | cloudflare | manual | zoom | slack
   severity: text('severity').notNull().default('info'), // info | success | warning | error
   message: text('message'),
 
@@ -218,7 +218,7 @@ export type DeliverableSide = 'us' | 'client';
 export type ContactSide = 'client' | 'internal';
 export type UserRole = 'admin' | 'pm' | 'ad' | 'stakeholder';
 
-export type EventSource = 'spiralfolio' | 'appscript' | 'cloudflare' | 'manual' | 'zoom';
+export type EventSource = 'spiralfolio' | 'appscript' | 'cloudflare' | 'manual' | 'zoom' | 'slack';
 export type EventSeverity = 'info' | 'success' | 'warning' | 'error';
 
 /**

@@ -579,6 +579,8 @@ function processRecordingWithParticipants(meetingId, meetingUuid, meetingTopic, 
       callType:   callType,
       pmName:     pmName,
       adName:     adName,
+      meetingId:  meetingId,
+      meetingTopic: meetingTopic,
     });
 
     // CHANGED: pass recording.start_time so the sheet stores the actual call date

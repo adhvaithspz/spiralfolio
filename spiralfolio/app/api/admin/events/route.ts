@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getAdminSession } from '@/lib/admin-auth';
-import { listEvents, summarizeEvents, type ListEventsFilters } from '@/lib/db/events';
-import type { EventSeverity, EventSource } from '@/lib/db/schema';
-import { mergeEventTypeFilters, parseEventGroupsParam } from '@/lib/admin/event-filters';
+import { listEvents, summarizePipelineParents, type ListEventsFilters } from '@/lib/db/events';
+import {
+  mergeEventTypeFilters,
+  parseAdminSinceDay,
+  parseAdminStatusParam,
+  parseAdminUntilDayInclusive,
+  parseEventGroupsParam,
+} from '@/lib/admin/event-filters';
 
 export const dynamic = 'force-dynamic';
-
-const SOURCES: EventSource[] = ['spiralfolio', 'appscript', 'cloudflare', 'manual', 'zoom'];
-const SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 function parseList(value: string | null): string[] {
   if (!value) return [];
@@ -27,32 +29,23 @@ export async function GET(req: Request) {
   const eventGroups = parseEventGroupsParam(params.get('event_groups'));
   const mergedEventTypes = mergeEventTypeFilters(eventTypesRaw, eventGroups);
 
-  const sourcesRaw = parseList(params.get('sources')) as EventSource[];
-  const severitiesRaw = parseList(params.get('severities')) as EventSeverity[];
-  const sources = sourcesRaw.filter(s => SOURCES.includes(s));
-  const severities = severitiesRaw.filter(s => SEVERITIES.includes(s));
+  const { severities, pipelineSkipped } = parseAdminStatusParam(params.get('severities'));
 
   const filters: ListEventsFilters = {
     eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
     eventGroups: eventGroups.length ? eventGroups : undefined,
     eventTypesIndividual: eventTypesRaw.length ? eventTypesRaw : undefined,
-    sources: sources.length ? sources : undefined,
     severities: severities.length ? severities : undefined,
+    pipelineSkipped: pipelineSkipped || undefined,
     clientId: params.get('client_id') ?? undefined,
     search: params.get('q') ?? undefined,
     limit: params.get('limit') ? Number(params.get('limit')) : undefined,
   };
 
-  const since = params.get('since');
-  if (since) {
-    const t = new Date(since);
-    if (!Number.isNaN(t.getTime())) filters.since = t;
-  }
-  const until = params.get('until');
-  if (until) {
-    const t = new Date(until);
-    if (!Number.isNaN(t.getTime())) filters.until = t;
-  }
+  const since = parseAdminSinceDay(params.get('since'));
+  if (since) filters.since = since;
+  const until = parseAdminUntilDayInclusive(params.get('until'));
+  if (until) filters.until = until;
 
   const cursor = params.get('cursor');
   if (cursor) {
@@ -63,15 +56,17 @@ export async function GET(req: Request) {
     }
   }
 
-  const [{ rows, nextCursor, total }, summary] = await Promise.all([
-    listEvents(filters),
-    summarizeEvents({ since: filters.since, until: filters.until }),
-  ]);
+  const listPromise = listEvents(filters);
+  const summaryPromise = filters.cursor
+    ? Promise.resolve(null)
+    : summarizePipelineParents(filters);
+
+  const [{ rows, nextCursor, total }, summary] = await Promise.all([listPromise, summaryPromise]);
 
   return NextResponse.json({
     rows,
     nextCursor: nextCursor ? `${nextCursor.createdAtMs}_${nextCursor.id}` : null,
     total,
-    summary,
+    ...(summary ? { summary } : {}),
   });
 }
