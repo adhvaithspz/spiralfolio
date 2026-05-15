@@ -1,6 +1,7 @@
 import type { Client } from '@/lib/db/schema';
 import type { ClientBrain } from '@/lib/db/brain';
 import type { BrainStats } from '@/lib/brain-stats';
+import { sessionDateAgeDays } from '@/lib/utils';
 
 export type ClientWithBrain = { client: Client; brain: ClientBrain; stats: BrainStats };
 
@@ -173,11 +174,9 @@ export function computeAttentionItems(items: ClientWithBrain[], limit = 6): Atte
 /** 12-bucket call-cadence series ending today (one bucket per ~7 days). */
 export function buildCallCadence(brain: ClientBrain, buckets = 12, bucketDays = 7): number[] {
   const out = new Array<number>(buckets).fill(0);
-  const now = Date.now();
   for (const entry of brain.call_log ?? []) {
-    const t = new Date(entry.date).getTime();
-    if (Number.isNaN(t)) continue;
-    const ageDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+    const ageDays = sessionDateAgeDays(entry.date);
+    if (ageDays === null || ageDays < 0) continue;
     const idxFromEnd = Math.floor(ageDays / bucketDays);
     if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
     out[buckets - 1 - idxFromEnd]++;

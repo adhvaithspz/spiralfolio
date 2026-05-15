@@ -32,6 +32,7 @@ import {
   type HistoryEntry,
 } from './brain';
 import { safeParse } from '@/lib/utils/json';
+import { sessionDateAgeDays } from '@/lib/utils';
 
 // ─── Single-table reads ──────────────────────────────────────────────────────
 
@@ -419,11 +420,9 @@ function groupBy<T, K>(arr: T[], key: (t: T) => K): Map<K, T[]> {
 
 function buildCadenceFromCallDates(dates: string[], buckets = 12, bucketDays = 7): number[] {
   const out = new Array<number>(buckets).fill(0);
-  const now = Date.now();
   for (const iso of dates) {
-    const t = new Date(iso).getTime();
-    if (Number.isNaN(t)) continue;
-    const ageDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+    const ageDays = sessionDateAgeDays(iso);
+    if (ageDays === null || ageDays < 0) continue;
     const idxFromEnd = Math.floor(ageDays / bucketDays);
     if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
     out[buckets - 1 - idxFromEnd]++;

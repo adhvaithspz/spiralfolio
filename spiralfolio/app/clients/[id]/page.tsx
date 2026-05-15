@@ -59,7 +59,7 @@ export default async function ClientPage({ params }: { params: { id: string } })
                 internalTeam={buildInternalTeam(client.pmName, client.adName, brain.internal_team ?? [])}
               />
             ),
-            calls: <CallTimeline entries={brain.call_log ?? []} />,
+            calls: <CallTimeline entries={brain.call_log ?? []} clientId={client.id} />,
             documents: (
               <DocumentsPanel
                 clientId={client.id}

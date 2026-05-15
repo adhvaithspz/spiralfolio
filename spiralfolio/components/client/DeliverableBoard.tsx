@@ -22,8 +22,10 @@ export function DeliverableBoard({
   const hasCompleted = completedOurs.length + completedTheirs.length > 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      {/* Active ~60%, recently completed ~40% — both scroll inside */}
+      <div
+        className={`grid min-h-0 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2 ${hasCompleted ? 'flex-[3] basis-0' : 'flex-1'}`}>
         <Column title="Our Deliverables" items={ours.filter(d => !isDone(d))} side="us" />
         <Column title="Client Deliverables" items={theirs.filter(d => !isDone(d))} side="client" />
       </div>
@@ -75,7 +77,7 @@ function CompletedSection({ ours, theirs }: { ours: BrainDeliverable[]; theirs: 
     });
   if (all.length === 0) return null;
   return (
-    <Card className="flex max-h-[min(32vh,280px)] shrink-0 flex-col overflow-hidden">
+    <Card className="flex min-h-0 flex-[2] basis-0 flex-col overflow-hidden">
       <CardHeader className="shrink-0">
         <CardTitle icon={<CheckCircle2 className="h-3.5 w-3.5 text-status-green" />}>
           Recently Completed

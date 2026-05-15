@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
+import { DayPicker } from 'react-day-picker';
 import {
   ChevronDown,
   ChevronRight,
@@ -11,14 +14,23 @@ import {
   Trophy,
   CircleDot,
   UserPlus,
+  Pencil,
+  ChevronLeft,
+  Loader2,
 } from 'lucide-react';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Tooltip } from '@/components/shared/Tooltip';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { formatDate, cn } from '@/lib/utils';
+import { Button } from '@/components/shared/Button';
+import { formatDate, cn, parseYYYYMMDDLocal, toLocalYYYYMMDD } from '@/lib/utils';
 import type { BrainCallLogEntry, CallChanges } from '@/lib/db/brain';
 
-export function CallTimeline({ entries }: { entries: BrainCallLogEntry[] }) {
+const CALL_TYPES = ['kickoff', 'weekly', 'ad-hoc', 'review'] as const;
+
+const dateInputClass =
+  'w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text placeholder:text-text-muted focus:border-accent focus:outline-none';
+
+export function CallTimeline({ entries, clientId }: { entries: BrainCallLogEntry[]; clientId: string }) {
   if (entries.length === 0) {
     return (
       <EmptyState
@@ -31,15 +43,63 @@ export function CallTimeline({ entries }: { entries: BrainCallLogEntry[] }) {
   return (
     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
       {sorted.map((e, i) => (
-        <CallRow key={`${e.date}-${i}`} entry={e} />
+        <CallRow key={e.id ?? `${e.date}-${i}`} entry={e} clientId={clientId} />
       ))}
     </div>
   );
 }
 
-function CallRow({ entry }: { entry: BrainCallLogEntry }) {
+function CallRow({ entry, clientId }: { entry: BrainCallLogEntry; clientId: string }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(() => parseYYYYMMDDLocal(entry.date));
+  const [callType, setCallType] = useState(entry.type ?? 'weekly');
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const summary = changeSummary(entry.changes);
+  const canEdit = Boolean(entry.id);
+
+  useEffect(() => {
+    setSelectedDate(parseYYYYMMDDLocal(entry.date));
+    setCallType(entry.type ?? 'weekly');
+  }, [entry.date, entry.type]);
+
+  const resetEdit = () => {
+    setSelectedDate(parseYYYYMMDDLocal(entry.date));
+    setCallType(entry.type ?? 'weekly');
+    setEditError(null);
+  };
+
+  const saveEdit = async () => {
+    if (!entry.id) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      const apiKey = process.env.NEXT_PUBLIC_SPIRALFOLIO_API_KEY ?? '';
+      const res = await fetch(`/api/calls/${entry.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          call_date: toLocalYYYYMMDD(selectedDate),
+          call_type: callType,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? 'Update failed');
+      setEditOpen(false);
+      router.refresh();
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="rounded-md border border-border bg-surface">
       <button
@@ -55,6 +115,123 @@ function CallRow({ entry }: { entry: BrainCallLogEntry }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="stat-num text-[12px] text-text-muted">{formatDate(entry.date)}</span>
             {entry.type && <StatusBadge status={entry.type} size="xs" />}
+            {canEdit && (
+              <Popover.Root
+                open={editOpen}
+                onOpenChange={o => {
+                  setEditOpen(o);
+                  if (!o) resetEdit();
+                }}>
+                <Popover.Trigger asChild>
+                  <button
+                    type="button"
+                    title="Edit call date"
+                    onClick={ev => {
+                      ev.stopPropagation();
+                      setEditOpen(true);
+                    }}
+                    className="inline-flex rounded p-0.5 text-text-muted hover:bg-surface-2 hover:text-text">
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    side="bottom"
+                    align="start"
+                    sideOffset={6}
+                    className="z-[60] w-[min(100vw-2rem,20rem)] rounded-lg border border-border bg-surface p-3 shadow-2xl"
+                    onClick={ev => ev.stopPropagation()}>
+                    <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                      Call details
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="mb-1 text-[10px] uppercase tracking-wider text-text-muted">Date</div>
+                        <div className="rounded-md border border-border p-1">
+                          <DayPicker
+                            mode="single"
+                            selected={selectedDate}
+                            onSelect={d => {
+                              if (d) setSelectedDate(d);
+                            }}
+                            showOutsideDays
+                            classNames={{
+                              root: 'p-2 select-none',
+                              months: 'flex flex-col',
+                              month: 'space-y-3',
+                              month_caption: 'flex items-center justify-between px-1 mb-1',
+                              caption_label: 'text-[13px] font-semibold text-text',
+                              nav: 'flex items-center gap-1',
+                              button_previous:
+                                'flex h-6 w-6 items-center justify-center rounded-md border border-border text-text-muted hover:bg-surface-2 hover:text-text',
+                              button_next:
+                                'flex h-6 w-6 items-center justify-center rounded-md border border-border text-text-muted hover:bg-surface-2 hover:text-text',
+                              month_grid: 'w-full border-collapse',
+                              weekdays: 'flex',
+                              weekday:
+                                'w-8 text-center text-[10px] font-medium uppercase tracking-wider text-text-muted pb-1',
+                              week: 'flex mt-1',
+                              day: 'h-8 w-8',
+                              day_button:
+                                'h-8 w-8 rounded-md text-[12px] text-text hover:bg-surface-2 focus:outline-none focus:ring-1 focus:ring-accent',
+                              selected: '[&>button]:bg-accent [&>button]:text-white [&>button]:hover:bg-accent',
+                              today: '[&>button]:border [&>button]:border-accent/60 [&>button]:text-accent',
+                              outside: '[&>button]:text-text-muted/40',
+                              disabled: '[&>button]:opacity-30 [&>button]:pointer-events-none',
+                            }}
+                            components={{
+                              Chevron: ({ orientation }) =>
+                                orientation === 'left' ? (
+                                  <ChevronLeft className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                ),
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] uppercase tracking-wider text-text-muted">
+                          Type
+                        </label>
+                        <select
+                          value={callType}
+                          onChange={e => setCallType(e.target.value)}
+                          className={dateInputClass}>
+                          {CALL_TYPES.map(t => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {editError && <div className="text-[11px] text-status-red">{editError}</div>}
+                      <div className="flex justify-end gap-2 pt-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            resetEdit();
+                            setEditOpen(false);
+                          }}>
+                          Cancel
+                        </Button>
+                        <Button type="button" variant="primary" size="sm" disabled={saving} onClick={saveEdit}>
+                          {saving ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" /> Save
+                            </>
+                          ) : (
+                            'Save'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+            )}
             {summary.length > 0 && (
               <div className="ml-0.5 flex flex-wrap items-center gap-1">
                 {summary.map(s => (

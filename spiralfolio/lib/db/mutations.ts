@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { db } from './index';
 import {
   calls,
@@ -36,6 +36,124 @@ function appendHistory(existing: string | null | undefined, entry: HistoryEntry)
   const arr = safeParse<HistoryEntry[]>(existing ?? '[]', []);
   arr.push(entry);
   return safeStringify(arr);
+}
+
+/** When a call's calendar date moves, keep embedded `call_date` on history entries in sync. */
+function patchHistoryJsonForCallDate(
+  historyStr: string | null | undefined,
+  callId: string,
+  newDate: string,
+): string | null {
+  const arr = safeParse<HistoryEntry[]>(historyStr ?? '[]', []);
+  let changed = false;
+  const next = arr.map(e => {
+    if (e.call_id === callId && e.call_date !== newDate) {
+      changed = true;
+      return { ...e, call_date: newDate };
+    }
+    return e;
+  });
+  return changed ? safeStringify(next) : null;
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Updates stored call date (and optionally call type). Keeps decisions, wins,
+ * and per-item history JSON aligned with the new date so “by call” groupings stay correct.
+ */
+export async function updateCallSchedule(opts: {
+  callId: string;
+  /** When set, must match the call row (prevents editing another client’s call by id). */
+  clientId?: string;
+  callDate: string;
+  callType?: string | null;
+}): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+  if (!ISO_DATE_RE.test(opts.callDate)) {
+    return { ok: false, status: 400, message: 'Invalid call_date (expected YYYY-MM-DD)' };
+  }
+
+  const [row] = await db.select().from(calls).where(eq(calls.id, opts.callId)).limit(1);
+  if (!row) return { ok: false, status: 404, message: 'Call not found' };
+  if (opts.clientId && row.clientId !== opts.clientId) {
+    return { ok: false, status: 404, message: 'Call not found' };
+  }
+
+  const nextType =
+    opts.callType !== undefined && opts.callType !== null && String(opts.callType).trim() !== ''
+      ? String(opts.callType).trim()
+      : row.callType ?? 'weekly';
+
+  if (row.callDate === opts.callDate && (row.callType ?? 'weekly') === nextType) {
+    return { ok: true };
+  }
+
+  const [duplicate] = await db
+    .select({ id: calls.id })
+    .from(calls)
+    .where(
+      and(
+        eq(calls.clientId, row.clientId),
+        eq(calls.callDate, opts.callDate),
+        eq(calls.callType, nextType),
+        ne(calls.id, opts.callId),
+      ),
+    )
+    .limit(1);
+
+  if (duplicate) {
+    return {
+      ok: false,
+      status: 409,
+      message: 'A call with this date and type already exists for this client.',
+    };
+  }
+
+  const at = new Date();
+  const callId = opts.callId;
+
+  await db
+    .update(calls)
+    .set({ callDate: opts.callDate, callType: nextType })
+    .where(eq(calls.id, callId));
+
+  await db
+    .update(decisions)
+    .set({ sourceCallDate: opts.callDate })
+    .where(and(eq(decisions.clientId, row.clientId), eq(decisions.sourceCallId, callId)));
+
+  await db
+    .update(wins)
+    .set({ sourceCallDate: opts.callDate })
+    .where(and(eq(wins.clientId, row.clientId), eq(wins.sourceCallId, callId)));
+
+  const [concernRows, deliverableRows, decisionRows, winRows] = await Promise.all([
+    db.select().from(concerns).where(eq(concerns.clientId, row.clientId)),
+    db.select().from(deliverables).where(eq(deliverables.clientId, row.clientId)),
+    db.select().from(decisions).where(eq(decisions.clientId, row.clientId)),
+    db.select().from(wins).where(eq(wins.clientId, row.clientId)),
+  ]);
+
+  for (const c of concernRows) {
+    const next = patchHistoryJsonForCallDate(c.history, callId, opts.callDate);
+    if (next) await db.update(concerns).set({ history: next }).where(eq(concerns.id, c.id));
+  }
+  for (const d of deliverableRows) {
+    const next = patchHistoryJsonForCallDate(d.history, callId, opts.callDate);
+    if (next) await db.update(deliverables).set({ history: next }).where(eq(deliverables.id, d.id));
+  }
+  for (const d of decisionRows) {
+    const next = patchHistoryJsonForCallDate(d.history, callId, opts.callDate);
+    if (next) await db.update(decisions).set({ history: next }).where(eq(decisions.id, d.id));
+  }
+  for (const w of winRows) {
+    const next = patchHistoryJsonForCallDate(w.history, callId, opts.callDate);
+    if (next) await db.update(wins).set({ history: next }).where(eq(wins.id, w.id));
+  }
+
+  await db.update(clients).set({ updatedAt: at }).where(eq(clients.id, row.clientId));
+
+  return { ok: true };
 }
 
 /**

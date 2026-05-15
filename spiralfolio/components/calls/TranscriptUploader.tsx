@@ -7,6 +7,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { DayPicker } from 'react-day-picker';
 import { Upload, X, CalendarIcon, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Button } from '@/components/shared/Button';
+import { toLocalYYYYMMDD } from '@/lib/utils';
 
 const inputClass =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text placeholder:text-text-muted focus:border-accent focus:outline-none';
@@ -17,10 +18,6 @@ type Result = {
   changes_summary: Record<string, number>;
   integrations?: Record<string, unknown>;
 };
-
-function toISODate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
 
 function formatDisplay(d: Date) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -66,7 +63,7 @@ export function TranscriptUploader({ clientId }: { clientId: string }) {
 
     const fd = new FormData(e.currentTarget);
     const transcript = String(fd.get('transcript') ?? '').trim();
-    const callDate = selectedDate ? toISODate(selectedDate) : String(fd.get('callDate') ?? '');
+    const callDate = selectedDate ? toLocalYYYYMMDD(selectedDate) : String(fd.get('callDate') ?? '');
     const callType = String(fd.get('callType') ?? 'weekly');
 
     if (!callDate) {

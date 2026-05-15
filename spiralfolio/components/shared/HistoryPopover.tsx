@@ -4,7 +4,7 @@ import { useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { History, CheckCircle2, ArrowUpRight, RefreshCw, Sparkles, ArrowRight } from 'lucide-react';
 import type { HistoryEntry } from '@/lib/db/brain';
-import { formatDate, relativeTime, cn } from '@/lib/utils';
+import { formatDate, formatSessionDate, historyEntryWhenLabel, cn } from '@/lib/utils';
 
 const KIND_META: Record<HistoryEntry['kind'], { label: string; tone: string; icon: React.ReactNode }> = {
   created: { label: 'Created', tone: 'text-text-muted', icon: <Sparkles className="h-3 w-3" /> },
@@ -32,7 +32,7 @@ function HistoryPopoverPanel({ sorted }: { sorted: HistoryEntry[] }) {
         <span className={cn('inline-flex items-center gap-1 text-[10px] font-medium', lastMeta.tone)}>
           {lastMeta.icon}
           <span>
-            {lastMeta.label} {relativeTime(last.at)}
+            {lastMeta.label} · {historyEntryWhenLabel(last)}
           </span>
         </span>
       </div>
@@ -50,8 +50,10 @@ function HistoryPopoverPanel({ sorted }: { sorted: HistoryEntry[] }) {
                   {meta.icon}
                   {meta.label}
                 </span>
-                <span className="stat-num text-[10px] text-text-muted" title={h.at}>
-                  {formatDate(h.call_date ?? h.at)}
+                <span
+                  className="stat-num text-[10px] text-text-muted"
+                  title={h.call_date ? `Call session: ${h.call_date}` : h.at}>
+                  {h.call_date ? formatSessionDate(h.call_date) : formatDate(h.at)}
                 </span>
               </div>
               {(h.prev_status || h.new_status) && (
@@ -130,7 +132,7 @@ export function HistoryPopover({
             'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-text-muted transition hover:border-accent/40 hover:text-text',
             className,
           )}
-          title={`${meaningful.length} update${meaningful.length === 1 ? '' : 's'} — last ${relativeTime(last.at)}`}
+          title={`${meaningful.length} update${meaningful.length === 1 ? '' : 's'} — last ${historyEntryWhenLabel(last)}`}
         >
           <History className="h-3 w-3" />
           <span>
@@ -171,13 +173,13 @@ export function UpdateMarker({
   const { last } = built;
   const meta = KIND_META[last.kind];
   const label = completed ? 'Completed' : meta.label;
-  const titleText = `${label} ${formatDate(last.call_date ?? last.at)}${onOpenHistory ? ' — click for full update history' : ''}`;
+  const titleText = `${label} ${historyEntryWhenLabel(last)}${onOpenHistory ? ' — click for full update history' : ''}`;
 
   const content = (
     <>
       {completed ? <CheckCircle2 className="h-3 w-3" /> : meta.icon}
       <span>
-        {label} {relativeTime(last.at)}
+        {label} · {historyEntryWhenLabel(last)}
       </span>
     </>
   );

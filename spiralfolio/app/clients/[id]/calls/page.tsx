@@ -33,7 +33,7 @@ export default async function CallsPage({ params }: { params: { id: string } }) 
           <TranscriptUploader clientId={client.id} />
         </div>
       </div>
-      <CallTimeline entries={brain.call_log ?? []} />
+      <CallTimeline entries={brain.call_log ?? []} clientId={client.id} />
     </div>
   );
 }
