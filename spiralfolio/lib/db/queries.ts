@@ -32,7 +32,8 @@ import {
   type HistoryEntry,
 } from './brain';
 import { safeParse } from '@/lib/utils/json';
-import { sessionDateAgeDays } from '@/lib/utils';
+import { cadenceBucketRangeLabel, sessionDateAgeDays } from '@/lib/utils';
+import type { PortfolioPulseBucket } from '@/lib/portfolio-pulse';
 
 // ─── Single-table reads ──────────────────────────────────────────────────────
 
@@ -401,8 +402,8 @@ export async function getPortfolioData() {
     };
   });
 
-  // Portfolio-wide weekly call volume for the past 16 weeks (oldest → newest).
-  const portfolioCadence = buildCadenceFromCallDates(allCalls.map(c => c.callDate), 16, 7);
+  const clientNameById = new Map(allClients.map(c => [c.id, c.name] as const));
+  const portfolioCadence = buildPortfolioCadenceBuckets(allCalls, clientNameById);
 
   return { items, recentActivity, portfolioCadence };
 }
@@ -426,6 +427,43 @@ function buildCadenceFromCallDates(dates: string[], buckets = 12, bucketDays = 7
     const idxFromEnd = Math.floor(ageDays / bucketDays);
     if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
     out[buckets - 1 - idxFromEnd]++;
+  }
+  return out;
+}
+
+const PORTFOLIO_CADENCE_BUCKETS = 16;
+const PORTFOLIO_CADENCE_BUCKET_DAYS = 7;
+
+function buildPortfolioCadenceBuckets(
+  allCalls: Call[],
+  clientNameById: Map<string, string>,
+): PortfolioPulseBucket[] {
+  const buckets = PORTFOLIO_CADENCE_BUCKETS;
+  const bucketDays = PORTFOLIO_CADENCE_BUCKET_DAYS;
+  const now = new Date();
+  const out: PortfolioPulseBucket[] = Array.from({ length: buckets }, (_, i) => ({
+    count: 0,
+    rangeLabel: cadenceBucketRangeLabel(i, buckets, bucketDays, now),
+    calls: [],
+  }));
+
+  for (const c of allCalls) {
+    const ageDays = sessionDateAgeDays(c.callDate);
+    if (ageDays === null || ageDays < 0) continue;
+    const idxFromEnd = Math.floor(ageDays / bucketDays);
+    if (idxFromEnd < 0 || idxFromEnd >= buckets) continue;
+    const i = buckets - 1 - idxFromEnd;
+    const b = out[i];
+    b.count++;
+    b.calls.push({
+      clientName: clientNameById.get(c.clientId) ?? 'Unknown',
+      callDate: c.callDate,
+      callType: c.callType ?? null,
+    });
+  }
+
+  for (const b of out) {
+    b.calls.sort((a, x) => (a.callDate < x.callDate ? 1 : a.callDate > x.callDate ? -1 : 0));
   }
   return out;
 }
