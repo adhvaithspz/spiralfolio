@@ -66,17 +66,24 @@ export function MomentumPanel({ stats, brain, wins }: { stats: BrainStats; brain
   const recencyColor = since === null ? '#71717a' : since <= 14 ? '#22c55e' : since <= 30 ? '#eab308' : '#ef4444';
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-border surface-glass">
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_280px]">
-        <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
+    <section className="overflow-hidden rounded-xl border border-border surface-glass max-lg:rounded-lg 2xl:rounded-2xl">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_180px_240px] 2xl:grid-cols-[1fr_220px_280px] min-[1920px]:grid-cols-[1fr_240px_300px]">
+        <div className="border-b border-border p-2 sm:p-3 max-lg:pb-2 lg:border-b-0 lg:border-r lg:p-4 2xl:p-5 min-[1920px]:p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-[11.5px] font-semibold uppercase tracking-[0.16em] text-text-dim">Call Cadence</h3>
-              <p className="mt-0.5 text-[11px] text-text-muted">
-                Last {HEATMAP_WEEKS} rolling weeks · <span className="text-text-dim">{stats.callCount}</span> processed
-                call
-                {stats.callCount === 1 ? '' : 's'}{' '}
-                <span className="text-text-muted/70">(by scheduled meeting date)</span>
+              <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-text-dim sm:text-[11.5px] min-[1920px]:text-[12px]">
+                Call Cadence
+              </h3>
+              <p className="mt-0.5 text-[10px] text-text-muted sm:text-[11px] min-[1920px]:text-[12px]">
+                <span className="lg:hidden">
+                  {HEATMAP_WEEKS} wk · {stats.callCount} call{stats.callCount === 1 ? '' : 's'}
+                </span>
+                <span className="hidden lg:inline">
+                  Last {HEATMAP_WEEKS} rolling weeks · <span className="text-text-dim">{stats.callCount}</span>{' '}
+                  processed call
+                  {stats.callCount === 1 ? '' : 's'}{' '}
+                  <span className="text-text-muted/70">(by scheduled meeting date)</span>
+                </span>
               </p>
             </div>
             <div className="hidden shrink-0 flex-col items-end gap-0.5 text-right sm:flex">
@@ -94,8 +101,8 @@ export function MomentumPanel({ stats, brain, wins }: { stats: BrainStats; brain
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-text-muted sm:hidden">
-            <span>Darker purple = busier slice</span>
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-[8.5px] text-text-muted sm:hidden">
+            <span>Purple = busier</span>
             <span className="opacity-60">·</span>
             <span>fewer</span>
             <Legend tone="bg-bg ring-soft" />
@@ -113,11 +120,13 @@ export function MomentumPanel({ stats, brain, wins }: { stats: BrainStats; brain
           />
         </div>
 
-        <div className="flex flex-col items-center justify-center border-b border-border p-5 lg:border-b-0 lg:border-r">
+        <div className="flex flex-col items-center justify-center border-b border-border p-2 sm:p-3 max-lg:flex-row max-lg:flex-wrap max-lg:justify-center max-lg:gap-3 max-lg:py-2 lg:flex-col lg:border-b-0 lg:border-r lg:p-4 lg:py-4 2xl:p-5 min-[1920px]:p-6">
           <RecencyGauge pct={recencyPct} color={recencyColor} since={since} tone={recencyTone} />
-          <div className="mt-3 text-center">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">Last contact</div>
-            <div className={`stat-num mt-1 text-[12px] ${recencyTone}`}>
+          <div className="mt-2 text-center sm:mt-3 max-lg:mt-0 max-lg:text-left lg:mt-2 lg:text-center 2xl:mt-3">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted sm:text-[10px] min-[1920px]:text-[11px]">
+              Last contact
+            </div>
+            <div className={`stat-num mt-0.5 text-[11px] sm:mt-1 sm:text-[12px] min-[1920px]:text-[13px] ${recencyTone}`}>
               {since === null ? 'No calls yet' : since === 0 ? 'Today' : `${since} day${since === 1 ? '' : 's'} ago`}
             </div>
           </div>
@@ -146,8 +155,8 @@ export function MomentumPanel({ stats, brain, wins }: { stats: BrainStats; brain
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-border bg-surface/60 px-5 py-2.5 text-[11px] text-text-muted">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-1 border-t border-border bg-surface/60 px-2 py-1 text-[8.5px] text-text-muted sm:gap-1.5 sm:px-4 sm:py-2 sm:text-[10px] max-lg:py-1.5 2xl:px-5 2xl:py-2.5 2xl:text-[11px] min-[1920px]:px-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="h-3 w-3" />
             <span>
@@ -161,8 +170,9 @@ export function MomentumPanel({ stats, brain, wins }: { stats: BrainStats; brain
             </span>
           </span>
         </div>
-        <div className="text-[10px] uppercase tracking-[0.14em] text-text-muted">
-          Updated when transcripts are processed
+        <div className="max-w-[42%] text-right text-[9px] uppercase tracking-[0.12em] text-text-muted sm:max-w-none sm:text-[10px] sm:tracking-[0.14em]">
+          <span className="sm:hidden">On transcript ingest</span>
+          <span className="hidden sm:inline">Updated when transcripts are processed</span>
         </div>
       </div>
     </section>
@@ -184,8 +194,8 @@ function Heatmap({
   const now = new Date();
 
   return (
-    <div className="mt-8 sm:mt-10">
-      <div className="flex items-end gap-1.5" role="img" aria-label="Call cadence by week bucket">
+    <div className="mt-1.5 sm:mt-3 lg:mt-6 2xl:mt-8 min-[1920px]:mt-10">
+      <div className="flex items-end gap-1 sm:gap-1.5" role="img" aria-label="Call cadence by week bucket">
         {buckets.map((count, i) => {
           const intensity = count === 0 ? 0 : count / max;
           const isLatest = i === buckets.length - 1;
@@ -248,10 +258,10 @@ function Heatmap({
                   'border-0 bg-transparent p-0 text-left outline-none cursor-default',
                   'focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
                 )}>
-                <div className={`h-10 w-full rounded-md ${bgClass} transition group-hover:ring-2 group-hover:ring-accent/30`} />
+                <div className={`h-4 w-full rounded sm:h-6 md:h-8 lg:h-8 2xl:h-10 ${bgClass} transition group-hover:ring-2 group-hover:ring-accent/30`} />
                 <span
                   className={cn(
-                    'stat-num mt-1 min-h-[14px] text-[10px] tabular-nums',
+                    'stat-num mt-0.5 min-h-[10px] text-[8px] tabular-nums sm:mt-0.5 sm:min-h-[12px] sm:text-[9px] md:text-[10px]',
                     count === 0 ? 'text-text-muted/35' : 'text-text-dim',
                   )}>
                   {count === 0 ? '—' : count}
@@ -280,7 +290,7 @@ function RecencyGauge({ pct, color, since, tone }: { pct: number; color: string;
   const dash = (pct / 100) * C;
 
   return (
-    <div className="relative h-[120px] w-[120px]">
+    <div className="relative h-14 w-14 sm:h-16 sm:w-16 lg:h-24 lg:w-24 2xl:h-[110px] 2xl:w-[110px] min-[1920px]:h-[120px] min-[1920px]:w-[120px]">
       <svg viewBox="-60 -60 120 120" className="h-full w-full -rotate-90">
         <circle cx="0" cy="0" r={R} fill="none" stroke="#1c1c22" strokeWidth={10} />
         <circle
@@ -296,10 +306,10 @@ function RecencyGauge({ pct, color, since, tone }: { pct: number; color: string;
         />
       </svg>
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-        <span className={`stat-num text-[26px] font-semibold leading-none ${tone}`}>
+        <span className={`stat-num text-[14px] font-semibold leading-none sm:text-[16px] lg:text-[18px] 2xl:text-[22px] min-[1920px]:text-[26px] ${tone}`}>
           {since === null ? '—' : since}
         </span>
-        <span className="mt-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-text-muted">
+        <span className="mt-0.5 text-[8px] font-medium uppercase tracking-[0.14em] text-text-muted sm:text-[9px]">
           {since === 1 ? 'day' : 'days'}
         </span>
       </div>
@@ -336,13 +346,17 @@ function Meter({
 }) {
   const filled = Math.min(value, 8);
   return (
-    <div className="bg-surface px-3.5 py-3">
+    <div className="bg-surface px-1.5 py-1.5 sm:px-3 sm:py-2.5 max-lg:py-1.5 2xl:px-3.5 2xl:py-3 min-[1920px]:px-4">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">{label}</span>
+        <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted sm:text-[10px] min-[1920px]:text-[11px]">
+          {label}
+        </span>
         <span className={`${TONE_TEXT[tone]}`}>{icon}</span>
       </div>
-      <div className={`stat-num mt-1.5 text-[22px] font-semibold leading-none ${TONE_TEXT[tone]}`}>{value}</div>
-      <div className="mt-2 flex gap-[2px]">
+      <div className={`stat-num mt-0.5 text-[14px] font-semibold leading-none sm:mt-1 sm:text-[17px] md:text-[18px] min-[1920px]:text-[22px] ${TONE_TEXT[tone]}`}>
+        {value}
+      </div>
+      <div className="mt-1 flex gap-px sm:mt-1.5 sm:gap-[2px]">
         {Array.from({ length: 8 }).map((_, i) => (
           <span
             key={i}

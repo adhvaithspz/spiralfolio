@@ -49,8 +49,11 @@ export function NewClientDialog() {
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>
-        <Button variant="primary" size="md">
-          <Plus className="h-3.5 w-3.5" /> New Client
+        <Button
+          variant="primary"
+          size="md"
+          className="max-sm:h-8 max-sm:gap-1 max-sm:px-2.5 max-sm:text-[12px]">
+          <Plus className="h-3.5 w-3.5 max-sm:h-3 max-sm:w-3" /> New Client
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>

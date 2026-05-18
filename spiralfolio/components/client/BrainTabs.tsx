@@ -22,14 +22,16 @@ export function BrainTabs({
   panels: Record<BrainTabKey, React.ReactNode>;
 }) {
   return (
-    <Tabs.Root defaultValue={defaultTab} className="flex min-h-0 flex-1 flex-col gap-4">
-      <Tabs.List className="inline-flex w-full shrink-0 items-center gap-1 rounded-xl border border-border surface-glass p-1">
+    <Tabs.Root
+      defaultValue={defaultTab}
+      className="flex min-h-0 flex-1 flex-col gap-1 max-lg:gap-1 sm:gap-3 2xl:gap-4 min-[1920px]:gap-5">
+      <Tabs.List className="scrollbar-subtle inline-flex w-full max-w-full shrink-0 items-center gap-0.5 overflow-x-auto overflow-y-hidden rounded-lg border border-border surface-glass p-0.5 sm:gap-1 sm:rounded-xl sm:p-1 2xl:p-1.5 min-[1920px]:rounded-2xl min-[1920px]:p-1.5">
         {TABS.map(t => (
           <Tabs.Trigger
             key={t.key}
             value={t.key}
             className={cn(
-              'group relative inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium tracking-wide transition',
+              'group relative inline-flex shrink-0 flex-none items-center justify-center gap-0.5 rounded-md px-1.5 py-1 text-[10px] font-medium tracking-wide transition sm:flex-1 sm:gap-1.5 sm:rounded-lg sm:px-3 sm:py-1.5 sm:text-[12px] 2xl:px-3.5 2xl:py-2 min-[1920px]:text-[13px]',
               'text-text-muted hover:text-text',
               'data-[state=active]:bg-surface-2 data-[state=active]:text-text data-[state=active]:shadow-[inset_0_0_0_1px_rgba(99,102,241,0.35)]'
             )}>

@@ -32,12 +32,12 @@ export default async function DashboardPage() {
   const attention = computeAttentionItems(items, 6);
 
   return (
-    <div className="flex flex-col gap-4 lg:h-[calc(100svh-6rem-1px)] lg:gap-3 lg:overflow-hidden">
+    <div className="flex flex-col gap-2 sm:gap-3 lg:h-[calc(100svh-6rem-1px)] lg:gap-2 lg:overflow-hidden 2xl:gap-4 min-[1920px]:gap-5">
       <div className="shrink-0">
         <PortfolioHeader kpis={kpis} />
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-3">
+      <div className="grid shrink-0 grid-cols-1 gap-2 sm:gap-3 lg:grid-cols-12 lg:gap-2 2xl:gap-3 min-[1920px]:gap-4">
         <div className="lg:col-span-8">
           <PortfolioPulse buckets={portfolioCadence} />
         </div>
@@ -46,11 +46,11 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:gap-3">
+      <div className="grid grid-cols-1 gap-2 sm:gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:gap-2 2xl:gap-3 min-[1920px]:gap-4">
         <section className="lg:col-span-8 lg:h-full lg:min-h-0">
           <ClientList items={items} />
         </section>
-        <aside className="flex flex-col gap-3 lg:col-span-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
+        <aside className="flex flex-col gap-2 sm:gap-3 lg:col-span-4 lg:h-full lg:min-h-0 lg:overflow-hidden 2xl:gap-4 min-[1920px]:gap-5">
           <div className="flex min-h-0 flex-1 flex-col">
             <NeedsAttention items={attention} />
           </div>

@@ -128,8 +128,13 @@ export function TranscriptUploader({ clientId }: { clientId: string }) {
         if (!o) reset();
       }}>
       <Dialog.Trigger asChild>
-        <Button variant="primary" size="md">
-          <Upload className="h-3.5 w-3.5" /> Upload Transcript
+        <Button
+          variant="primary"
+          size="md"
+          className="w-full max-lg:h-8 max-lg:gap-1 max-lg:px-2.5 max-lg:text-[11px] max-sm:h-8 max-sm:gap-1 max-sm:px-2.5 max-sm:text-[12px] sm:w-auto lg:h-9 lg:text-[13px]">
+          <Upload className="h-3.5 w-3.5 max-lg:h-3 max-lg:w-3 max-sm:h-3 max-sm:w-3" />
+          <span className="hidden lg:inline">Upload Transcript</span>
+          <span className="lg:hidden">Upload</span>
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>

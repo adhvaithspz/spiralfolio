@@ -3,6 +3,7 @@
 import { Activity, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { Tooltip } from '@/components/shared/Tooltip';
 import type { PortfolioPulseBucket, PortfolioPulseBucketCall } from '@/lib/portfolio-pulse';
+import { useMinWidth } from '@/lib/hooks/use-min-width';
 import { cn, formatSessionDate } from '@/lib/utils';
 
 /**
@@ -31,19 +32,21 @@ export function PortfolioPulse({
         : 0
       : Math.round(((recentHalf - olderHalf) / olderHalf) * 100);
 
+  /** Large desktops / 4K-style widths: restore the original taller chart math. */
+  const largeChart = useMinWidth('(min-width: 1536px)');
+
   const W = 800;
-  const H = 120;
+  const H = largeChart ? 120 : 96;
   const PAD_X = 8;
-  const PAD_Y = 12;
-  const innerW = W - PAD_X * 2;
+  const PAD_Y = largeChart ? 12 : 8;
   const innerH = H - PAD_Y * 2;
 
-  /** Chart body height inside `py-3` wrapper (matches SVG math). */
+  /** Bar lane height — must match chart wrapper height minus vertical padding on the flex row. */
   const chartBodyPx = H - PAD_Y * 2;
 
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-border surface-glass p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="relative overflow-hidden rounded-2xl border border-border surface-glass p-2.5 sm:p-4 2xl:p-5 min-[1920px]:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 2xl:gap-3">
         <Tooltip
           content={
             <>
@@ -56,20 +59,22 @@ export function PortfolioPulse({
             </>
           }
         >
-          <div className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
-              <Activity className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:gap-2.5 2xl:gap-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent sm:h-7 sm:w-7 sm:rounded-lg min-[1920px]:h-8 min-[1920px]:w-8">
+              <Activity className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
             </span>
             <div className="text-left">
-              <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.16em] text-text-dim">
+              <h2 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-text-dim sm:text-[11.5px] min-[1920px]:text-[12px]">
                 Portfolio Pulse
               </h2>
-              <p className="mt-0.5 text-[11px] text-text-muted">{weeksLabel} of call activity</p>
+              <p className="mt-0 hidden text-[10px] text-text-muted sm:mt-0.5 sm:block sm:text-[11px] min-[1920px]:text-[12px]">
+                {weeksLabel} of call activity
+              </p>
             </div>
           </div>
         </Tooltip>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 2xl:gap-3">
           <Tooltip
             content={`Sum of all calls in the last ${buckets.length} weekly buckets (${total} total).`}
           >
@@ -114,8 +119,12 @@ export function PortfolioPulse({
         </div>
       </div>
 
-      <div className="mt-5">
-        <div className="relative h-[120px] w-full px-2">
+      <div className="mt-2 sm:mt-3 2xl:mt-5">
+        <div
+          className={cn(
+            'relative w-full px-1 sm:px-2',
+            largeChart ? 'h-[120px]' : 'h-[96px]',
+          )}>
           <svg
             viewBox={`0 0 ${W} ${H}`}
             preserveAspectRatio="none"
@@ -135,7 +144,10 @@ export function PortfolioPulse({
           </svg>
 
           <div
-            className="relative flex h-full gap-1 py-3"
+            className={cn(
+              'relative flex h-full gap-0.5 sm:gap-1',
+              largeChart ? 'py-3' : 'py-2',
+            )}
             role="img"
             aria-label="Weekly call volume">
             {buckets.map((bucket, i) => {
@@ -176,7 +188,7 @@ export function PortfolioPulse({
             })}
           </div>
         </div>
-        <div className="mt-2 flex justify-between text-[10px] uppercase tracking-[0.14em] text-text-muted/70">
+        <div className="mt-1 flex justify-between text-[9px] uppercase tracking-[0.14em] text-text-muted/70 sm:mt-2 sm:text-[10px] 2xl:text-[11px]">
           <Tooltip content="Oldest week shown (first bar on the left).">
             <span>{buckets.length}w ago</span>
           </Tooltip>
@@ -240,9 +252,13 @@ function Pill({
 }) {
   const text = tone === 'accent' ? 'text-accent' : 'text-text';
   return (
-    <div className="flex items-baseline gap-1.5 rounded-lg border border-border bg-surface/50 px-2.5 py-1.5">
-      <span className={`stat-num text-[15px] font-semibold ${text}`}>{label}</span>
-      <span className="text-[10px] uppercase tracking-[0.14em] text-text-muted">{sub}</span>
+    <div className="flex items-baseline gap-1 rounded-md border border-border bg-surface/50 px-2 py-1 sm:gap-1.5 sm:rounded-lg sm:px-2.5 sm:py-1.5 min-[1920px]:px-3 min-[1920px]:py-2">
+      <span className={`stat-num text-[13px] font-semibold sm:text-[15px] min-[1920px]:text-[16px] ${text}`}>
+        {label}
+      </span>
+      <span className="text-[9px] uppercase tracking-[0.14em] text-text-muted sm:text-[10px] min-[1920px]:text-[11px]">
+        {sub}
+      </span>
     </div>
   );
 }
@@ -267,7 +283,7 @@ function TrendPill({ trend, delta }: { trend: 'up' | 'down' | 'flat'; delta: num
   }[trend];
   return (
     <div
-      className={`stat-num flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[11px] font-medium ${cfg.tone}`}>
+      className={`stat-num flex items-center gap-0.5 rounded-md border px-1.5 py-1 text-[10px] font-medium sm:gap-1 sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-[11px] min-[1920px]:text-[12px] ${cfg.tone}`}>
       {cfg.icon}
       <span>{cfg.label}</span>
     </div>

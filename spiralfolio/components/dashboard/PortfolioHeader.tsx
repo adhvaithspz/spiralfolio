@@ -83,21 +83,21 @@ export function PortfolioHeader({ kpis }: { kpis: PortfolioKPIs }) {
         className="pointer-events-none absolute -bottom-40 -left-20 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl"
       />
 
-      <div className="relative flex flex-col gap-6 px-6 pt-6 pb-7 lg:flex-row lg:items-end lg:justify-between lg:px-8 lg:pt-8">
+      <div className="relative flex flex-col gap-2.5 px-3 pb-3 pt-3 sm:gap-3 sm:px-5 sm:pb-5 sm:pt-4 lg:flex-row lg:items-end lg:justify-between lg:gap-4 lg:px-7 lg:pb-5 lg:pt-6 2xl:gap-6 2xl:px-8 2xl:pb-7 2xl:pt-8 min-[1920px]:gap-7 min-[1920px]:px-10 min-[1920px]:pb-8 min-[1920px]:pt-10">
         <div className="max-w-2xl">
-          <div className="flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.18em] text-text-muted">
-            <Sparkles className="h-3 w-3 text-accent" />
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[9px] font-medium uppercase tracking-[0.18em] text-text-muted sm:gap-x-2 sm:text-[10.5px] 2xl:text-[10.5px]">
+            <Sparkles className="h-2.5 w-2.5 shrink-0 text-accent sm:h-3 sm:w-3 min-[1920px]:h-3.5 min-[1920px]:w-3.5" />
             <span>{BRAND.tagline}</span>
             <span className="text-text-muted/40">·</span>
             <span>{todayLabel()}</span>
           </div>
-          <h1 className="mt-2.5 text-[28px] font-semibold leading-tight tracking-tight text-text lg:text-[32px]">
+          <h1 className="mt-1.5 text-[1.125rem] font-semibold leading-tight tracking-tight text-text sm:mt-2 sm:text-[1.625rem] lg:text-[1.75rem] 2xl:text-[28px] min-[1920px]:mt-2.5 min-[1920px]:text-[32px]">
             {greeting()}.
-            <span className="ml-2 bg-gradient-to-r from-text-muted via-text-dim to-text-muted bg-clip-text text-transparent">
+            <span className="ml-1 bg-gradient-to-r from-text-muted via-text-dim to-text-muted bg-clip-text text-transparent sm:ml-1.5 2xl:ml-2">
               Here&rsquo;s your portfolio.
             </span>
           </h1>
-          <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-text-muted">
+          <p className="mt-1.5 hidden max-w-xl text-[12px] leading-snug text-text-muted lg:mt-2 lg:block lg:text-[13px] 2xl:leading-relaxed min-[1920px]:text-[14px]">
             Every active client at a glance. Click any project for the full brain, or use{' '}
             <span className="rounded bg-accent-soft px-1 py-0.5 font-medium text-text">Get Briefed</span>{' '}
             for an AI summary you can paste straight into Slack.
@@ -145,21 +145,24 @@ const TONE_BAR: Record<Tone, string> = {
 function Tile({ label, value, icon, hint, tone = 'default' }: TileProps) {
   const active = tone !== 'default';
   return (
-    <div className="group relative overflow-hidden bg-surface/80 px-5 py-4 transition hover:bg-surface-2">
+    <div className="group relative overflow-hidden bg-surface/80 px-2.5 py-2 transition hover:bg-surface-2 sm:px-4 sm:py-3 2xl:px-5 2xl:py-4">
       {active && (
         <span
           aria-hidden
           className={`absolute inset-x-0 top-0 h-px opacity-80 ${TONE_BAR[tone]}`}
         />
       )}
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+      <div className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted sm:gap-1.5 sm:text-[10px] 2xl:gap-1.5 2xl:text-[10px]">
         <span className={TONE_TEXT[tone]}>{icon}</span>
         <span>{label}</span>
       </div>
-      <div className={`stat-num mt-2 text-[28px] font-semibold leading-none tracking-tight ${TONE_TEXT[tone]}`}>
+      <div
+        className={`stat-num mt-1 text-[1.125rem] font-semibold leading-none tracking-tight sm:mt-1.5 sm:text-[1.625rem] 2xl:mt-2 2xl:text-[26px] min-[1920px]:text-[28px] ${TONE_TEXT[tone]}`}>
         {value}
       </div>
-      {hint && <div className="mt-1.5 text-[11px] text-text-muted">{hint}</div>}
+      {hint && (
+        <div className="mt-0.5 text-[9px] text-text-muted sm:mt-1 sm:text-[10px] 2xl:mt-1.5 2xl:text-[11px]">{hint}</div>
+      )}
     </div>
   );
 }

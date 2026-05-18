@@ -242,19 +242,19 @@ export function EventLogExplorer({
   const forceGroupedShells = explorerFiltersActive(initialFilters);
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col gap-5 overflow-hidden">
-      <header className="shrink-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col gap-2 overflow-hidden sm:gap-4 2xl:gap-5 min-[1920px]:gap-6">
+      <header className="shrink-0 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2 2xl:gap-3 min-[1920px]:gap-4">
         <div>
-          <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-            <Activity className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-text-muted sm:gap-2 sm:text-[11.5px] min-[1920px]:text-[12px]">
+            <Activity className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
             Pipeline event log
           </div>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-text">
+          <h1 className="mt-0.5 text-lg font-semibold tracking-tight text-text sm:mt-1 sm:text-xl md:text-2xl 2xl:text-[1.75rem] min-[1920px]:text-[2rem]">
             {summary.total.toLocaleString()} meeting{summary.total === 1 ? '' : 's'}
           </h1>
         </div>
-        <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto scrollbar-subtle">
-          <label className="flex shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
+        <div className="flex shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto scrollbar-subtle sm:gap-2 2xl:gap-2.5">
+          <label className="flex shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2 py-1 text-[11px] text-text-dim sm:gap-2 sm:px-2.5 sm:py-1.5 sm:text-[12px] min-[1920px]:px-3 min-[1920px]:py-2">
             <input
               type="checkbox"
               checked={grouping}
@@ -264,7 +264,7 @@ export function EventLogExplorer({
             <Layers className="h-3 w-3" />
             Group related
           </label>
-          <label className="flex shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
+          <label className="flex shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2 py-1 text-[11px] text-text-dim sm:gap-2 sm:px-2.5 sm:py-1.5 sm:text-[12px] min-[1920px]:px-3 min-[1920px]:py-2">
             <input
               type="checkbox"
               checked={autorefresh}
@@ -422,20 +422,20 @@ function SummaryStrip({ summary }: { summary: EventCountSummary }) {
     { label: 'Success', value: summary.byStatus.Success, icon: CheckCircle2, accent: 'text-status-green' },
   ];
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3 sm:gap-2 2xl:gap-3 min-[1920px]:gap-3">
       {tiles.map(t => (
         <div
           key={t.label}
-          className="flex items-center justify-between rounded-xl border border-border bg-surface/40 px-4 py-3">
+          className="flex items-center justify-between rounded-lg border border-border bg-surface/40 px-2.5 py-1.5 sm:rounded-xl sm:px-4 sm:py-2.5 2xl:px-5 2xl:py-3 min-[1920px]:py-3.5">
           <div>
-            <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted sm:text-[10.5px]">
               {t.label}
             </div>
-            <div className="stat-num mt-1 text-2xl font-semibold text-text">
+            <div className="stat-num mt-0 text-lg font-semibold text-text sm:mt-0.5 sm:text-2xl min-[1920px]:text-[1.75rem]">
               {t.value.toLocaleString()}
             </div>
           </div>
-          <t.icon className={`h-5 w-5 ${t.accent}`} />
+          <t.icon className={`h-4 w-4 shrink-0 sm:h-5 sm:w-5 ${t.accent}`} />
         </div>
       ))}
     </div>
@@ -461,37 +461,37 @@ function FilterPanel({
     arr.includes(value) ? arr.filter(v => v !== value) : [...arr, value];
 
   return (
-    <div className="rounded-xl border border-border bg-surface/40 p-4">
-      <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-        <Filter className="h-3.5 w-3.5" />
+    <div className="rounded-lg border border-border bg-surface/40 p-2.5 sm:rounded-xl sm:p-4 2xl:p-5 min-[1920px]:p-6">
+      <div className="flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-text-muted sm:gap-2 sm:text-[11.5px]">
+        <Filter className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
         Filters
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+      <div className="mt-1.5 grid grid-cols-1 gap-2 sm:mt-2 sm:gap-2.5 lg:grid-cols-3 lg:gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[11px]">
             Search
           </span>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-text-muted sm:left-2.5 sm:h-3.5 sm:w-3.5" />
             <input
               type="text"
               value={draft.search}
               onChange={e => setDraft(d => ({ ...d, search: e.target.value }))}
               placeholder="meeting topic, client, message…"
-              className="h-9 w-full rounded-md border border-border bg-bg pl-7 pr-2 text-[12.5px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent"
+              className="h-8 w-full rounded-md border border-border bg-bg pl-6 pr-2 text-[12px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent sm:h-9 sm:pl-7 sm:text-[12.5px]"
             />
           </div>
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[11px]">
             Client
           </span>
           <select
             value={draft.clientId}
             onChange={e => setDraft(d => ({ ...d, clientId: e.target.value }))}
-            className="h-9 rounded-md border border-border bg-bg px-2 text-[12.5px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent">
+            className="h-8 rounded-md border border-border bg-bg px-2 text-[12px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent sm:h-9 sm:text-[12.5px]">
             <option value="">All clients</option>
             {clients.map(c => (
               <option key={c.id} value={c.id}>
@@ -501,33 +501,33 @@ function FilterPanel({
           </select>
         </label>
 
-        <div className="grid grid-cols-2 gap-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+        <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[11px]">
               Since
             </span>
             <input
               type="date"
               value={draft.since}
               onChange={e => setDraft(d => ({ ...d, since: e.target.value }))}
-              className="h-9 rounded-md border border-border bg-bg px-2 text-[12.5px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent"
+              className="h-8 rounded-md border border-border bg-bg px-1.5 text-[12px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent sm:h-9 sm:px-2 sm:text-[12.5px]"
             />
           </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[11px]">
               Until
             </span>
             <input
               type="date"
               value={draft.until}
               onChange={e => setDraft(d => ({ ...d, until: e.target.value }))}
-              className="h-9 rounded-md border border-border bg-bg px-2 text-[12.5px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent"
+              className="h-8 rounded-md border border-border bg-bg px-1.5 text-[12px] text-text outline-none transition focus:border-accent focus:ring-1 focus:ring-accent sm:h-9 sm:px-2 sm:text-[12.5px]"
             />
           </label>
         </div>
       </div>
 
-      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="mt-1.5 grid min-w-0 grid-cols-1 gap-2 sm:mt-2 sm:gap-2.5 lg:grid-cols-2 lg:gap-3">
         <ChipGroup
           label="Status"
           layout="scroll"
@@ -535,8 +535,8 @@ function FilterPanel({
           selected={draft.statusValues}
           onToggle={v => setDraft(d => ({ ...d, statusValues: toggleArray(d.statusValues, v) }))}
         />
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[11px]">
             Event type
           </span>
           <div className="-mx-1 max-w-full overflow-x-auto px-1 pb-1 scrollbar-subtle">
@@ -570,7 +570,7 @@ function FilterPanel({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-end gap-2">
+      <div className="mt-2 flex items-center justify-end gap-2 sm:mt-3">
         <Button variant="ghost" size="sm" onClick={onReset}>
           Reset
         </Button>
