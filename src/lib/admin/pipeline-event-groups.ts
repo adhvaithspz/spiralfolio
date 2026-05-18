@@ -125,16 +125,29 @@ export function meetingKey(row: EventLog): string | null {
 export function meetingBucketKeyForStagedGroup(g: StagedPipelineGroup): string {
   const rows = [g.primary, ...g.others];
   for (const row of rows) {
-    const mid = row.meetingId?.trim();
-    if (mid) return `meeting:${mid}`;
-  }
-  for (const row of rows) {
     const cid = row.callId?.trim();
     if (cid) return `call:${cid}`;
   }
+  // ctd (client + calendar day + topic) is preferred over bare meetingId so that
+  // PMI / Personal Meeting Room sessions reusing the same Zoom meeting ID across
+  // different calls are bucketed separately rather than collapsed into one row.
   for (const row of rows) {
     for (const tok of collectCorrelationTokens(row)) {
       if (tok.startsWith('ctd:')) return tok;
+    }
+  }
+  for (const row of rows) {
+    const mid = row.meetingId?.trim();
+    if (mid) {
+      // Qualify with event-date + topic so PMI / Personal Meeting Room sessions that
+      // reuse the same Zoom meeting ID across different calls or days bucket separately.
+      const date =
+        toMs(g.primary.createdAt) > 0
+          ? new Date(toMs(g.primary.createdAt)).toISOString().slice(0, 10)
+          : '';
+      const topic = normalizeTopic(rows.find(r => r.meetingTopic)?.meetingTopic);
+      const qualifier = [date, topic].filter(Boolean).join('|');
+      return qualifier ? `meeting:${mid}|${qualifier}` : `meeting:${mid}`;
     }
   }
   const topicRow = rows.find(r => normalizeTopic(r.meetingTopic).length >= 3);
@@ -492,6 +505,24 @@ export function collapseStagedGroupsByMeetingKey(groups: StagedPipelineGroup[]):
   return out;
 }
 
+/**
+ * Returns true when a staged group's pipeline stage overlaps with the selected
+ * filter chips. For `related` groups (multi-stage meetings), at least one event
+ * must belong to a selected stage. This prevents peer-hydrated groups from
+ * unrelated stages leaking into filtered results.
+ */
+function groupStageMatchesFilter(g: StagedPipelineGroup, selectedGroupIds: EventGroupId[]): boolean {
+  if (selectedGroupIds.length === 0) return true;
+  if (g.stageId === 'related') {
+    const all = [g.primary, ...g.others];
+    return all.some(e => {
+      const s = eventTypePipelineStage(e.eventType);
+      return s !== 'related' && (selectedGroupIds as string[]).includes(s);
+    });
+  }
+  return (selectedGroupIds as string[]).includes(g.stageId);
+}
+
 export function mergeStageGroupsForGroupFilter(
   groups: StagedPipelineGroup[],
   selectedGroupIds: EventGroupId[],
@@ -516,9 +547,10 @@ export function mergeStageGroupsForGroupFilter(
       for (const e of all) {
         entry.byId.set(e.id, e);
       }
-    } else {
+    } else if (groupStageMatchesFilter(g, selectedGroupIds)) {
       unmerged.push(g);
     }
+    // else: peer-hydrated group whose stage doesn't match the selected filter — drop it
   }
 
   const merged: StagedPipelineGroup[] = [];

@@ -794,6 +794,21 @@ function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHe
 
   if (stageId === 'related') {
     const hasKnownPipeline = events.some(e => eventTypePipelineStage(e.eventType) !== 'related');
+    const hasAnalysed = events.some(e => eventTypePipelineStage(e.eventType) === 'call_analysed');
+    const hasSkip = events.some(e => e.eventType === 'appscript_processing_skipped');
+
+    // Multiple skip clusters collapsed into 'related' — show as skipped, not processed
+    if (hasKnownPipeline && hasSkip && !hasAnalysed) {
+      return {
+        title: 'Call skipped',
+        description: summary,
+        icon: <Slash className="h-3.5 w-3.5" />,
+        iconWrap: 'bg-surface-2 text-text-muted',
+        statusWord,
+        statusBadge,
+      };
+    }
+
     return {
       title: hasKnownPipeline ? 'Call Processed' : 'Related events',
       description: summary,

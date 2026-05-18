@@ -41,17 +41,16 @@ export function parseAdminStatusParam(raw: string | null | undefined): {
   return { severities, pipelineSkipped };
 }
 
-/** URL `event_groups=` slugs (order matches filter chip order). */
+/** URL `event_groups=` slugs shown as filter chips (order matches chip order). */
 export const EVENT_GROUP_IDS = [
-  'call_detected',
   'call_analysed',
   'call_skipped',
   'brain_manual',
 ] as const;
 export type EventGroupId = (typeof EVENT_GROUP_IDS)[number];
 
-/** Stages shown as parent rows; `related` is not a filter chip. */
-export type PipelineStageId = EventGroupId | 'related';
+/** All pipeline stage IDs — superset of filterable {@link EventGroupId}s. */
+export type PipelineStageId = EventGroupId | 'call_detected' | 'related';
 
 /** Webhook hops before Apps Script records `appscript_processing_skipped`. */
 export const CALL_SKIPPED_UPSTREAM_EVENT_TYPES = [
@@ -59,7 +58,7 @@ export const CALL_SKIPPED_UPSTREAM_EVENT_TYPES = [
   'zoom_webhook_received',
 ] as const;
 
-export const EVENT_GROUP_META: Record<EventGroupId, { label: string; types: string[] }> = {
+export const EVENT_GROUP_META: Record<EventGroupId | 'call_detected', { label: string; types: string[] }> = {
   call_detected: {
     label: 'Call detected',
     types: ['zoom_webhook_received', 'cloudflare_webhook_received'],
