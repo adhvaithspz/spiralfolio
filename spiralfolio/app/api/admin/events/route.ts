@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAdminSession } from '@/lib/admin-auth';
 import { listEvents, summarizePipelineParents, type ListEventsFilters } from '@/lib/db/events';
 import {
+  ADMIN_EVENT_LOG_PAGE_SIZE,
   mergeEventTypeFilters,
   parseAdminSinceDay,
   parseAdminStatusParam,
@@ -31,6 +32,14 @@ export async function GET(req: Request) {
 
   const { severities, pipelineSkipped } = parseAdminStatusParam(params.get('severities'));
 
+  const limitRaw = params.get('limit') ? Number(params.get('limit')) : ADMIN_EVENT_LOG_PAGE_SIZE;
+  const limit = Math.min(
+    500,
+    Math.max(Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : ADMIN_EVENT_LOG_PAGE_SIZE, 1),
+  );
+  const page = Math.max(1, parseInt(params.get('page') ?? '1', 10) || 1);
+  const offset = (page - 1) * limit;
+
   const filters: ListEventsFilters = {
     eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
     eventGroups: eventGroups.length ? eventGroups : undefined,
@@ -39,7 +48,8 @@ export async function GET(req: Request) {
     pipelineSkipped: pipelineSkipped || undefined,
     clientId: params.get('client_id') ?? undefined,
     search: params.get('q') ?? undefined,
-    limit: params.get('limit') ? Number(params.get('limit')) : undefined,
+    limit,
+    offset,
   };
 
   const since = parseAdminSinceDay(params.get('since'));
@@ -47,26 +57,20 @@ export async function GET(req: Request) {
   const until = parseAdminUntilDayInclusive(params.get('until'));
   if (until) filters.until = until;
 
-  const cursor = params.get('cursor');
-  if (cursor) {
-    const [tsStr, id] = cursor.split('_');
-    const ts = Number(tsStr);
-    if (!Number.isNaN(ts) && id) {
-      filters.cursor = { createdAtMs: ts, id };
-    }
-  }
-
   const listPromise = listEvents(filters);
-  const summaryPromise = filters.cursor
-    ? Promise.resolve(null)
-    : summarizePipelineParents(filters);
+  const summaryPromise = page > 1 ? Promise.resolve(null) : summarizePipelineParents(filters);
 
-  const [{ rows, nextCursor, total }, summary] = await Promise.all([listPromise, summaryPromise]);
+  const [{ rows, total, hasNextPage }, summary] = await Promise.all([listPromise, summaryPromise]);
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return NextResponse.json({
     rows,
-    nextCursor: nextCursor ? `${nextCursor.createdAtMs}_${nextCursor.id}` : null,
+    page,
+    limit,
     total,
+    totalPages,
+    hasNextPage,
     ...(summary ? { summary } : {}),
   });
 }

@@ -79,6 +79,14 @@ body::before {
   background-color: rgba(82, 82, 91, 0.55);
 }
 
+/* When the admin event log is active, keep <main> fixed to the viewport chrome so
+   only the log table’s inner overflow-y scrolls — not the whole page. */
+main.admin-main-fill:has(.admin-shell-lock) {
+  overflow: hidden !important;
+  min-height: 0;
+}
+
+
 /* shared utility for "stat number" */
 .stat-num {
   font-family: var(--font-mono);

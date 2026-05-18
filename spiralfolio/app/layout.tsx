@@ -18,11 +18,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const session = await readUserSession(sessionToken);
 
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-bg text-text">
+    <html lang="en" className="dark h-dvh overflow-hidden">
+      <body className="flex h-full min-h-0 flex-col overflow-hidden bg-bg text-text">
         <TooltipProvider>
         {session && (
-          <header className="sticky top-0 z-30 w-full border-b border-border-strong bg-surface/85 shadow-[0_1px_0_0_rgba(0,0,0,0.4)] backdrop-blur-xl">
+          <header className="sticky top-0 z-30 w-full shrink-0 border-b border-border-strong bg-surface/85 shadow-[0_1px_0_0_rgba(0,0,0,0.4)] backdrop-blur-xl">
             <div className="flex h-14 w-full items-center justify-between px-6 lg:px-8">
               <Link href="/dashboard" className="group flex items-center gap-2.5">
                 <div className="relative h-7 w-7 overflow-hidden rounded-lg bg-gradient-to-br from-[#6366f1] via-[#7c5cf3] to-[#7c3aed] shadow-glow-soft transition group-hover:shadow-glow">
@@ -64,7 +64,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </header>
         )}
-        <main className="mx-auto max-w-[1400px] px-6 py-6 lg:py-5">{children}</main>
+        <main className="admin-main-fill mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col overflow-y-auto px-6 py-6 lg:py-5">
+          {children}
+        </main>
         </TooltipProvider>
       </body>
     </html>

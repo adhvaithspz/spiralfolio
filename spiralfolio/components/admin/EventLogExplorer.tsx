@@ -7,7 +7,10 @@ import {
   Brain,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Filter,
   Layers,
   Loader2,
@@ -17,6 +20,7 @@ import {
   Slash,
   Sparkles,
   ShieldAlert,
+  Waypoints,
   XCircle,
 } from 'lucide-react';
 import { relativeTime } from '@/lib/utils';
@@ -37,9 +41,12 @@ import {
 } from '@/lib/admin/event-filters';
 import {
   brainIngestChannel,
+  collapseStagesPerMeetingCluster,
+  describeMergedMeetingSummary,
   groupRelatedEvents,
   isClientBrainPipelineEvent,
   mergeStageGroupsForGroupFilter,
+  pipelineStatusWordForMergedCluster,
   pipelineStatusWordForStage,
   splitClusterIntoStages,
   toMs,
@@ -95,26 +102,34 @@ function explorerFiltersActive(f: Filters): boolean {
 
 export function EventLogExplorer({
   initialRows,
-  initialNextCursor,
+  page: pageProp,
+  pageSize,
+  totalRows: totalRowsProp,
+  totalPages: totalPagesProp,
   summary: summaryProp,
   clients,
-  username,
   initialFilters,
 }: {
   initialRows: EventLog[];
-  initialNextCursor: string | null;
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
   summary: EventCountSummary;
   clients: { id: string; name: string }[];
-  username: string;
   initialFilters: Filters;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const page = Math.max(1, Number.parseInt(searchParams.get('page') ?? String(pageProp), 10) || 1);
 
   const [summary, setSummary] = React.useState<EventCountSummary>(summaryProp);
 
   const [rows, setRows] = React.useState<EventLog[]>(initialRows);
-  const [cursor, setCursor] = React.useState<string | null>(initialNextCursor);
+  const [listMeta, setListMeta] = React.useState({
+    totalRows: totalRowsProp,
+    totalPages: totalPagesProp,
+  });
   const [pending, setPending] = React.useState(false);
   const [autorefresh, setAutorefresh] = React.useState(false);
   const [grouping, setGrouping] = React.useState(true);
@@ -122,7 +137,8 @@ export function EventLogExplorer({
 
   const groups = React.useMemo(() => {
     let staged: StagedEventGroup[] = grouping
-      ? groupRelatedEvents(rows).flatMap(splitClusterIntoStages)
+      ? groupRelatedEvents(rows)
+          .flatMap(c => collapseStagesPerMeetingCluster(splitClusterIntoStages(c)))
       : rows.map(r => ({
           primary: r,
           others: [] as EventLog[],
@@ -144,8 +160,11 @@ export function EventLogExplorer({
 
   React.useEffect(() => {
     setRows(initialRows);
-    setCursor(initialNextCursor);
-  }, [initialRows, initialNextCursor]);
+    setListMeta({
+      totalRows: totalRowsProp,
+      totalPages: totalPagesProp,
+    });
+  }, [initialRows, totalRowsProp, totalPagesProp]);
 
   React.useEffect(() => {
     setDraft(initialFilters);
@@ -165,51 +184,46 @@ export function EventLogExplorer({
       setOrDel('q', next.search);
       setOrDel('since', next.since);
       setOrDel('until', next.until);
+      params.delete('page');
       router.replace(`/admin?${params.toString()}`);
     },
     [router, searchParams],
   );
 
-  const loadMore = React.useCallback(async () => {
-    if (!cursor || pending) return;
-    setPending(true);
-    try {
+  const goToPage = React.useCallback(
+    (next: number) => {
       const params = new URLSearchParams(searchParams.toString());
-      params.set('cursor', cursor);
-      const res = await fetch(`/api/admin/events?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as {
-          rows: EventLog[];
-          nextCursor: string | null;
-        };
-        setRows(prev => [...prev, ...hydrateRows(data.rows)]);
-        setCursor(data.nextCursor);
-      }
-    } finally {
-      setPending(false);
-    }
-  }, [cursor, pending, searchParams]);
+      if (next <= 1) params.delete('page');
+      else params.set('page', String(next));
+      router.replace(`/admin?${params.toString()}`);
+    },
+    [router, searchParams],
+  );
 
   const refresh = React.useCallback(async () => {
     setPending(true);
     try {
       const params = new URLSearchParams(searchParams.toString());
-      params.delete('cursor');
+      params.set('limit', String(pageSize));
       const res = await fetch(`/api/admin/events?${params.toString()}`);
       if (res.ok) {
         const data = (await res.json()) as {
           rows: EventLog[];
-          nextCursor: string | null;
-          summary: EventCountSummary;
+          summary?: EventCountSummary;
+          total: number;
+          totalPages: number;
         };
         setRows(hydrateRows(data.rows));
-        setCursor(data.nextCursor);
+        setListMeta({
+          totalRows: data.total,
+          totalPages: data.totalPages,
+        });
         if (data.summary) setSummary(data.summary);
       }
     } finally {
       setPending(false);
     }
-  }, [searchParams]);
+  }, [searchParams, pageSize]);
 
   React.useEffect(() => {
     if (!autorefresh) return;
@@ -228,8 +242,8 @@ export function EventLogExplorer({
   const forceGroupedShells = explorerFiltersActive(initialFilters);
 
   return (
-    <div className="flex h-[calc(100dvh-6.5rem)] max-h-[calc(100dvh-6.5rem)] flex-col gap-5 overflow-hidden">
-      <header className="shrink-0 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col gap-5 overflow-hidden">
+      <header className="shrink-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.18em] text-text-muted">
             <Activity className="h-3.5 w-3.5" />
@@ -238,18 +252,9 @@ export function EventLogExplorer({
           <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-text">
             {summary.total.toLocaleString()} meeting{summary.total === 1 ? '' : 's'}
           </h1>
-          <p className="mt-0.5 text-[12.5px] text-text-muted">
-            Each row is one pipeline stage for that meeting (detect → analyse → brain). Expand for raw
-            webhook and Apps Script lines — newest first. With filters applied, sibling lines for the same
-            meeting are merged into those stages. Summary counts each meeting once (worst stage outcome).
-          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[12px] text-text-muted">
-            Signed in as <span className="text-text">{username}</span>
-          </span>
-          <span aria-hidden className="h-4 w-px bg-border" />
-          <label className="flex select-none items-center gap-2 rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
+        <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto scrollbar-subtle">
+          <label className="flex shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
             <input
               type="checkbox"
               checked={grouping}
@@ -259,7 +264,7 @@ export function EventLogExplorer({
             <Layers className="h-3 w-3" />
             Group related
           </label>
-          <label className="flex select-none items-center gap-2 rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
+          <label className="flex shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-md border border-border bg-surface/50 px-2.5 py-1.5 text-[12px] text-text-dim">
             <input
               type="checkbox"
               checked={autorefresh}
@@ -276,7 +281,9 @@ export function EventLogExplorer({
         </div>
       </header>
 
-      <SummaryStrip summary={summary} />
+      <div className="shrink-0">
+        <SummaryStrip summary={summary} />
+      </div>
 
       <div className="shrink-0">
         <FilterPanel
@@ -299,7 +306,7 @@ export function EventLogExplorer({
       />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border surface-glass">
+      <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border border-border surface-glass">
         <div className="grid shrink-0 grid-cols-[150px_minmax(0,2fr)_minmax(0,1fr)_120px_120px] items-center gap-3 border-b border-border px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-text-muted">
           <div>Time</div>
           <div>Event</div>
@@ -307,7 +314,7 @@ export function EventLogExplorer({
           <div>Source</div>
           <div className="text-right">Status</div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-bg/20">
           {rows.length === 0 ? (
             <div className="p-10">
               <EmptyState
@@ -336,14 +343,65 @@ export function EventLogExplorer({
             </ol>
           )}
         </div>
-        {cursor && (
-          <div className="flex shrink-0 items-center justify-center border-t border-border p-3">
-            <Button variant="secondary" size="sm" onClick={loadMore} disabled={pending}>
-              {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              Load more
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <div className="text-[12px] text-text-muted">
+            {grouping ? (
+              <>
+                <span className="stat-num font-medium text-text">{groups.length.toLocaleString()}</span>
+                {' '}
+                group{groups.length === 1 ? '' : 's'} on this page
+              </>
+            ) : (
+              <>
+                <span className="stat-num font-medium text-text">{listMeta.totalRows.toLocaleString()}</span>
+                {' '}
+                matching row{listMeta.totalRows === 1 ? '' : 's'}
+              </>
+            )}
+            {listMeta.totalPages > 1 ? (
+              <span className="text-text-muted/85">
+                {' '}
+                · Page {page} of {listMeta.totalPages}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1 || pending}
+              onClick={() => goToPage(1)}
+              title="First page">
+              <ChevronsLeft className="h-3.5 w-3.5" />
+              First
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1 || pending}
+              onClick={() => goToPage(page - 1)}>
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= listMeta.totalPages || pending}
+              onClick={() => goToPage(page + 1)}>
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= listMeta.totalPages || pending}
+              onClick={() => goToPage(listMeta.totalPages)}
+              title="Last page">
+              Last
+              <ChevronsRight className="h-3.5 w-3.5" />
             </Button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -694,16 +752,27 @@ function describeStageSummary(stageId: PipelineStageId, events: EventLog[]): str
 }
 
 function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHeaderModel {
-  const summary = describeStageSummary(stageId, events);
-  const statusWord = pipelineStatusWordForStage(stageId, events);
+  const summary =
+    stageId === 'related' ? describeMergedMeetingSummary(events) : describeStageSummary(stageId, events);
+  const statusWord =
+    stageId === 'related'
+      ? pipelineStatusWordForMergedCluster(events)
+      : pipelineStatusWordForStage(stageId, events);
   const statusBadge = <PipelineStatusBadge word={statusWord} />;
 
   if (stageId === 'related') {
+    const hasKnownPipeline = events.some(e => eventTypePipelineStage(e.eventType) !== 'related');
     return {
-      title: 'Related events',
+      title: hasKnownPipeline ? 'Call Processed' : 'Related events',
       description: summary,
-      icon: <Layers className="h-3.5 w-3.5" />,
-      iconWrap: 'bg-surface-2 text-text-dim',
+      icon: hasKnownPipeline ? (
+        <Waypoints className="h-3.5 w-3.5" strokeWidth={2.25} />
+      ) : (
+        <Layers className="h-3.5 w-3.5" />
+      ),
+      iconWrap: hasKnownPipeline
+        ? 'bg-emerald-500/15 text-emerald-300'
+        : 'bg-surface-2 text-text-dim',
       statusWord,
       statusBadge,
     };
@@ -733,7 +802,7 @@ function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHe
     case 'call_analysed': {
       const mergedBrain = events.some(isClientBrainPipelineEvent);
       return {
-        title: mergedBrain ? 'Call analysed and brain updated' : meta.label,
+        title: mergedBrain ? 'Call Processed and brain updated' : meta.label,
         description: summary,
         icon: mergedBrain ? (
           <span className="flex gap-0.5">

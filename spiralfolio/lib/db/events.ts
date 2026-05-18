@@ -4,15 +4,17 @@ import { db } from './index';
 import { eventLogs, type EventLog, type EventSeverity, type EventSource } from './schema';
 import { nanoid } from '@/lib/utils/nanoid';
 import { safeStringify } from '@/lib/utils/json';
-import type { EventGroupId } from '@/lib/admin/event-filters';
 import {
+  ADMIN_EVENT_LOG_PAGE_SIZE,
   CALL_SKIPPED_UPSTREAM_EVENT_TYPES,
   EVENT_GROUP_META,
   SKIP_PIPELINE_STATUS_EVENT_TYPES,
+  type EventGroupId,
 } from '@/lib/admin/event-filters';
 import {
   aggregatePipelineParents,
-  meetingKey,
+  collectCorrelationTokens,
+  parseCtdCorrelationToken,
   type PipelineStatusWord,
 } from '@/lib/admin/pipeline-event-groups';
 
@@ -98,16 +100,18 @@ export type ListEventsFilters = {
   since?: Date;
   until?: Date;
   limit?: number;
-  cursor?: { createdAtMs: number; id: string } | null;
+  /** Offset for admin log pagination (ordered by createdAt desc, id desc). */
+  offset?: number;
 };
 
 export type ListEventsResult = {
   rows: EventLog[];
-  nextCursor: { createdAtMs: number; id: string } | null;
   total: number;
+  /** True when another page of rows exists after this one. */
+  hasNextPage: boolean;
 };
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = ADMIN_EVENT_LOG_PAGE_SIZE;
 const MAX_LIMIT = 500;
 
 // Event types we never want to show in the admin dashboard. Keeping them as a
@@ -233,21 +237,30 @@ function collectClusterKeyParts(rows: EventLog[]): {
   meetingIds: string[];
   callIds: string[];
   topicsNorm: string[];
+  clientDayTopics: { clientId: string; day: string; topic: string }[];
 } {
   const meetingIds = new Set<string>();
   const callIds = new Set<string>();
   const topicsNorm = new Set<string>();
+  const ctdMap = new Map<string, { clientId: string; day: string; topic: string }>();
+
   for (const r of rows) {
-    const k = meetingKey(r);
-    if (!k) continue;
-    if (k.startsWith('meeting:')) meetingIds.add(k.slice('meeting:'.length));
-    else if (k.startsWith('call:')) callIds.add(k.slice('call:'.length));
-    else if (k.startsWith('topic:')) topicsNorm.add(k.slice('topic:'.length));
+    for (const t of collectCorrelationTokens(r)) {
+      if (t.startsWith('meeting:')) meetingIds.add(t.slice('meeting:'.length));
+      else if (t.startsWith('call:')) callIds.add(t.slice('call:'.length));
+      else if (t.startsWith('topic:')) topicsNorm.add(t.slice('topic:'.length));
+      else {
+        const ctd = parseCtdCorrelationToken(t);
+        if (ctd) ctdMap.set(`${ctd.clientId}|${ctd.day}|${ctd.topic}`, ctd);
+      }
+    }
   }
+
   return {
     meetingIds: [...meetingIds],
     callIds: [...callIds],
     topicsNorm: [...topicsNorm],
+    clientDayTopics: [...ctdMap.values()],
   };
 }
 
@@ -266,8 +279,8 @@ async function fetchClusterPeersForRows(
   seedRows: EventLog[],
   bounds: Pick<ListEventsFilters, 'since' | 'until' | 'clientId'>,
 ): Promise<EventLog[]> {
-  const { meetingIds, callIds, topicsNorm } = collectClusterKeyParts(seedRows);
-  if (!meetingIds.length && !callIds.length && !topicsNorm.length) return [];
+  const { meetingIds, callIds, topicsNorm, clientDayTopics } = collectClusterKeyParts(seedRows);
+  if (!meetingIds.length && !callIds.length && !topicsNorm.length && !clientDayTopics.length) return [];
 
   const conds = [] as ReturnType<typeof eq>[];
   applyHiddenTypeFilter(conds);
@@ -286,6 +299,15 @@ async function fetchClusterPeersForRows(
   }
   for (const topic of topicsNorm) {
     keyParts.push(sql`lower(trim(${eventLogs.meetingTopic})) = ${topic}`);
+  }
+  for (const c of clientDayTopics) {
+    keyParts.push(
+      and(
+        eq(eventLogs.clientId, c.clientId),
+        eq(eventLogs.callDate, c.day),
+        sql`lower(trim(${eventLogs.meetingTopic})) = ${c.topic}`,
+      ) as never,
+    );
   }
 
   conds.push(or(...keyParts) as never);
@@ -345,21 +367,11 @@ function pushAdminEventLogFilters(conds: ReturnType<typeof eq>[], filters: ListE
 
 export async function listEvents(filters: ListEventsFilters = {}): Promise<ListEventsResult> {
   const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const offset = Math.max(0, filters.offset ?? 0);
 
   const conds = [] as ReturnType<typeof eq>[];
   applyHiddenTypeFilter(conds);
   pushAdminEventLogFilters(conds, filters);
-
-  // Cursor-based pagination on (createdAt DESC, id DESC).
-  if (filters.cursor) {
-    const ts = new Date(filters.cursor.createdAtMs);
-    conds.push(
-      or(
-        sql`${eventLogs.createdAt} < ${ts}`,
-        and(eq(eventLogs.createdAt, ts), sql`${eventLogs.id} < ${filters.cursor.id}`),
-      ) as never,
-    );
-  }
 
   const where = conds.length ? and(...conds) : undefined;
 
@@ -369,33 +381,25 @@ export async function listEvents(filters: ListEventsFilters = {}): Promise<ListE
       .from(eventLogs)
       .where(where)
       .orderBy(desc(eventLogs.createdAt), desc(eventLogs.id))
-      .limit(limit + 1),
+      .limit(limit + 1)
+      .offset(offset),
     db.select({ n: sql<number>`count(*)` }).from(eventLogs).where(where),
   ]);
 
-  let nextCursor: ListEventsResult['nextCursor'] = null;
-  let trimmed = rows;
-  if (rows.length > limit) {
-    trimmed = rows.slice(0, limit);
-    const last = trimmed[trimmed.length - 1];
-    if (last) {
-      nextCursor = {
-        createdAtMs: last.createdAt.getTime(),
-        id: last.id,
-      };
-    }
-  }
+  const hasNextPage = rows.length > limit;
+  const trimmed = hasNextPage ? rows.slice(0, limit) : rows;
 
   let rowsOut = trimmed;
-  if (shouldExpandClustersForFilters(filters) && trimmed.length > 0) {
+  /** Always hydrate peers for seeds so paginated pages still group full meeting runs (not only when filters narrow the log). */
+  if (trimmed.length > 0) {
     const peers = await fetchClusterPeersForRows(trimmed, filters);
     rowsOut = mergeDedupeSortEvents(trimmed, peers);
   }
 
   return {
     rows: rowsOut,
-    nextCursor,
     total: Number(totalRows[0]?.n ?? 0),
+    hasNextPage,
   };
 }
 

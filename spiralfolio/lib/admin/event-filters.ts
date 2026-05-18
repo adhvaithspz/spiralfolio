@@ -10,6 +10,9 @@
 
 import type { EventSeverity, EventSource } from '@/lib/db/schema';
 
+/** Rows per page for `/admin` and `GET /api/admin/events` (shared by SSR + client refresh). */
+export const ADMIN_EVENT_LOG_PAGE_SIZE = 50;
+
 const VALID_EVENT_SEVERITIES: EventSeverity[] = ['info', 'success', 'warning', 'error'];
 
 /** URL `severities=` token — not a DB `severity`; matches explicit skip outcomes. */
@@ -62,7 +65,7 @@ export const EVENT_GROUP_META: Record<EventGroupId, { label: string; types: stri
     types: ['zoom_webhook_received', 'cloudflare_webhook_received'],
   },
   call_analysed: {
-    label: 'Call analysed',
+    label: 'Call Processed',
     types: [
       'appscript_processing_started',
       'appscript_processing_completed',

@@ -23,14 +23,87 @@ export type StagedPipelineGroup = PipelineClusterGroup & {
 
 const GROUP_WINDOW_MS = 30 * 60 * 1000;
 
+function normalizeTopic(topic: string | null | undefined): string {
+  if (!topic?.trim()) return '';
+  return topic.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeCallDay(callDate: string | null | undefined): string | null {
+  if (!callDate?.trim()) return null;
+  const s = callDate.trim();
+  const head = s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/** Token for client + calendar day + topic — links Zoom rows (meeting id) to SpiralFolio rows (call id). */
+function ctdToken(clientId: string, day: string, topicNorm: string): string {
+  return `ctd:${clientId}|${day}|${topicNorm}`;
+}
+
+export function parseCtdCorrelationToken(token: string): { clientId: string; day: string; topic: string } | null {
+  if (!token.startsWith('ctd:')) return null;
+  const rest = token.slice(4);
+  const i = rest.indexOf('|');
+  const j = rest.indexOf('|', i + 1);
+  if (i <= 0 || j <= i + 1) return null;
+  return {
+    clientId: rest.slice(0, i),
+    day: rest.slice(i + 1, j),
+    topic: rest.slice(j + 1),
+  };
+}
+
+/**
+ * All correlation handles for one row. Rows that share any token belong in one pipeline group
+ * (before the 30‑minute window splits runs).
+ */
+export function collectCorrelationTokens(row: EventLog): string[] {
+  const tokens: string[] = [];
+  const mid = row.meetingId?.trim();
+  if (mid) tokens.push(`meeting:${mid}`);
+  const cid = row.callId?.trim();
+  if (cid) tokens.push(`call:${cid}`);
+  const topic = normalizeTopic(row.meetingTopic);
+  if (topic.length >= 3) {
+    tokens.push(`topic:${topic}`);
+    const day = normalizeCallDay(row.callDate);
+    const cli = row.clientId?.trim();
+    if (cli && day) tokens.push(ctdToken(cli, day, topic));
+  }
+  return tokens;
+}
+
+class UnionFind {
+  private readonly parent = new Map<string, string>();
+
+  find(x: string): string {
+    if (!this.parent.has(x)) this.parent.set(x, x);
+    const p = this.parent.get(x)!;
+    if (p !== x) {
+      const root = this.find(p);
+      this.parent.set(x, root);
+      return root;
+    }
+    return p;
+  }
+
+  union(a: string, b: string): void {
+    const ra = this.find(a);
+    const rb = this.find(b);
+    if (ra !== rb) this.parent.set(rb, ra);
+  }
+}
+
 export function meetingKey(row: EventLog): string | null {
   const mid = row.meetingId?.trim();
   if (mid) return `meeting:${mid}`;
-  if (row.callId) return `call:${row.callId}`;
-  if (row.meetingTopic) {
-    const norm = row.meetingTopic.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (norm.length >= 3) return `topic:${norm}`;
-  }
+  const cid = row.callId?.trim();
+  if (cid) return `call:${cid}`;
+  const topic = normalizeTopic(row.meetingTopic);
+  if (topic.length >= 3) return `topic:${topic}`;
   return null;
 }
 
@@ -132,6 +205,50 @@ export function pipelineStatusWordForStage(stageId: PipelineStageId, events: Eve
   }
 }
 
+/**
+ * Worst pipeline outcome when multiple stages are merged into one parent row
+ * ({@link collapseStagesPerMeetingCluster} → `stageId: 'related'`).
+ */
+export function pipelineStatusWordForMergedCluster(events: EventLog[]): PipelineStatusWord {
+  const byStage = new Map<PipelineStageId, EventLog[]>();
+  for (const row of events) {
+    const s = eventTypePipelineStage(row.eventType);
+    const arr = byStage.get(s) ?? [];
+    arr.push(row);
+    byStage.set(s, arr);
+  }
+  let worst: PipelineStatusWord = 'Success';
+  let worstRank = PIPELINE_STATUS_RANK[worst];
+  for (const [stageId, evs] of byStage) {
+    const w = pipelineStatusWordForStage(stageId, evs);
+    const r = PIPELINE_STATUS_RANK[w];
+    if (r > worstRank) {
+      worstRank = r;
+      worst = w;
+    }
+  }
+  return worst;
+}
+
+/** Short subhead when multiple stages are collapsed into one row. */
+export function describeMergedMeetingSummary(events: EventLog[]): string {
+  const stages = new Set(events.map(e => eventTypePipelineStage(e.eventType)));
+  const parts: string[] = [];
+  const order: PipelineStageId[] = ['call_detected', 'call_skipped', 'call_analysed', 'brain_manual', 'related'];
+  for (const sid of order) {
+    if (!stages.has(sid)) continue;
+    if (sid === 'related') parts.push('Other');
+    else if (sid === 'brain_manual') {
+      const ch = brainIngestChannel(events);
+      parts.push(
+        ch === 'manual_upload' ? EVENT_GROUP_META.brain_manual.label : 'brain updated automatically',
+      );
+    } else parts.push(EVENT_GROUP_META[sid].label);
+  }
+  if (!parts.length) return 'Events for this meeting — expand for detail';
+  return `${parts.join(' · ')} — expand for raw lines`;
+}
+
 function clusterNewestPrimary(run: EventLog[]): PipelineClusterGroup {
   const sortedDesc = [...run].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
   const [primary, ...others] = sortedDesc;
@@ -145,23 +262,34 @@ function clusterNewestPrimary(run: EventLog[]): PipelineClusterGroup {
 export function groupRelatedEvents(rows: EventLog[]): PipelineClusterGroup[] {
   const out: PipelineClusterGroup[] = [];
   const noKey: EventLog[] = [];
-  const byKey = new Map<string, EventLog[]>();
+  const rowTokenLists = rows.map(r => collectCorrelationTokens(r));
 
-  for (const row of rows) {
-    const k = meetingKey(row);
-    if (!k) noKey.push(row);
-    else {
-      const arr = byKey.get(k) ?? [];
-      arr.push(row);
-      byKey.set(k, arr);
+  const uf = new UnionFind();
+  for (const tokens of rowTokenLists) {
+    if (tokens.length === 0) continue;
+    const head = tokens[0]!;
+    for (let i = 1; i < tokens.length; i++) uf.union(head, tokens[i]!);
+  }
+
+  const byRoot = new Map<string, EventLog[]>();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const tokens = rowTokenLists[i]!;
+    if (tokens.length === 0) {
+      noKey.push(row);
+      continue;
     }
+    const root = uf.find(tokens[0]!);
+    const arr = byRoot.get(root) ?? [];
+    arr.push(row);
+    byRoot.set(root, arr);
   }
 
   for (const row of noKey) {
     out.push({ primary: row, others: [] });
   }
 
-  for (const bucket of byKey.values()) {
+  for (const bucket of byRoot.values()) {
     bucket.sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
     let run: EventLog[] = [];
     for (const row of bucket) {
@@ -244,6 +372,24 @@ export function splitClusterIntoStages(cluster: PipelineClusterGroup): StagedPip
   return out;
 }
 
+/**
+ * After {@link splitClusterIntoStages}, collapse all stages from the **same**
+ * meeting cluster into one expandable parent row so detect / skip / analyse /
+ * brain appear together.
+ */
+export function collapseStagesPerMeetingCluster(stages: StagedPipelineGroup[]): StagedPipelineGroup[] {
+  if (stages.length <= 1) return stages;
+  const byId = new Map<string, EventLog>();
+  for (const s of stages) {
+    byId.set(s.primary.id, s.primary);
+    for (const o of s.others) byId.set(o.id, o);
+  }
+  const merged = [...byId.values()].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  const [primary, ...others] = merged;
+  if (!primary) return stages;
+  return [{ primary, others, stageId: 'related' }];
+}
+
 export function mergeStageGroupsForGroupFilter(
   groups: StagedPipelineGroup[],
   selectedGroupIds: EventGroupId[],
@@ -294,7 +440,9 @@ export function aggregatePipelineParents(
   rows: EventLog[],
   selectedGroupIds: EventGroupId[],
 ): { totalParents: number; byStatus: Record<PipelineStatusWord, number> } {
-  let staged: StagedPipelineGroup[] = groupRelatedEvents(rows).flatMap(splitClusterIntoStages);
+  let staged: StagedPipelineGroup[] = groupRelatedEvents(rows).flatMap(c =>
+    collapseStagesPerMeetingCluster(splitClusterIntoStages(c)),
+  );
   if (selectedGroupIds.length) {
     staged = mergeStageGroupsForGroupFilter(staged, selectedGroupIds);
   }
@@ -318,7 +466,10 @@ export function aggregatePipelineParents(
     let worstRank = PIPELINE_STATUS_RANK[worst];
     for (const stage of stages) {
       const all = [stage.primary, ...stage.others];
-      const w = pipelineStatusWordForStage(stage.stageId, all);
+      const w =
+        stage.stageId === 'related'
+          ? pipelineStatusWordForMergedCluster(all)
+          : pipelineStatusWordForStage(stage.stageId, all);
       const r = PIPELINE_STATUS_RANK[w];
       if (r > worstRank) {
         worstRank = r;
