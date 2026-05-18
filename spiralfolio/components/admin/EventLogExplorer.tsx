@@ -7,10 +7,7 @@ import {
   Brain,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   Filter,
   Layers,
   Loader2,
@@ -41,6 +38,7 @@ import {
 } from '@/lib/admin/event-filters';
 import {
   brainIngestChannel,
+  collapseStagedGroupsByMeetingKey,
   collapseStagesPerMeetingCluster,
   describeMergedMeetingSummary,
   groupRelatedEvents,
@@ -102,43 +100,58 @@ function explorerFiltersActive(f: Filters): boolean {
 
 export function EventLogExplorer({
   initialRows,
-  page: pageProp,
+  initialHasNextPage,
   pageSize,
   totalRows: totalRowsProp,
-  totalPages: totalPagesProp,
   summary: summaryProp,
   clients,
   initialFilters,
 }: {
   initialRows: EventLog[];
-  page: number;
+  initialHasNextPage: boolean;
   pageSize: number;
   totalRows: number;
-  totalPages: number;
   summary: EventCountSummary;
   clients: { id: string; name: string }[];
   initialFilters: Filters;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const page = Math.max(1, Number.parseInt(searchParams.get('page') ?? String(pageProp), 10) || 1);
 
   const [summary, setSummary] = React.useState<EventCountSummary>(summaryProp);
 
   const [rows, setRows] = React.useState<EventLog[]>(initialRows);
   const [listMeta, setListMeta] = React.useState({
     totalRows: totalRowsProp,
-    totalPages: totalPagesProp,
   });
+  const [hasMore, setHasMore] = React.useState(initialHasNextPage);
   const [pending, setPending] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   const [autorefresh, setAutorefresh] = React.useState(false);
   const [grouping, setGrouping] = React.useState(true);
   const [draft, setDraft] = React.useState<Filters>(initialFilters);
 
+  const scrollRootRef = React.useRef<HTMLDivElement>(null);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+  const nextPageRef = React.useRef(2);
+  const loadingMoreRef = React.useRef(false);
+  const hasMoreRef = React.useRef(initialHasNextPage);
+
+  React.useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+
+  /** Strip legacy `page=` — list is infinite scroll client-side. */
+  React.useEffect(() => {
+    if (!searchParams.has('page')) return;
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete('page');
+    router.replace(`/admin?${p.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
   const groups = React.useMemo(() => {
     let staged: StagedEventGroup[] = grouping
-      ? groupRelatedEvents(rows)
-          .flatMap(c => collapseStagesPerMeetingCluster(splitClusterIntoStages(c)))
+      ? groupRelatedEvents(rows).flatMap(c => collapseStagesPerMeetingCluster(splitClusterIntoStages(c)))
       : rows.map(r => ({
           primary: r,
           others: [] as EventLog[],
@@ -147,6 +160,7 @@ export function EventLogExplorer({
     if (initialFilters.eventGroups.length) {
       staged = mergeStageGroupsForGroupFilter(staged, initialFilters.eventGroups);
     }
+    staged = collapseStagedGroupsByMeetingKey(staged);
     staged.sort((a, b) => toMs(b.primary.createdAt) - toMs(a.primary.createdAt));
     return staged;
   }, [rows, grouping, initialFilters.eventGroups]);
@@ -160,11 +174,11 @@ export function EventLogExplorer({
 
   React.useEffect(() => {
     setRows(initialRows);
-    setListMeta({
-      totalRows: totalRowsProp,
-      totalPages: totalPagesProp,
-    });
-  }, [initialRows, totalRowsProp, totalPagesProp]);
+    setListMeta({ totalRows: totalRowsProp });
+    setHasMore(initialHasNextPage);
+    nextPageRef.current = 2;
+    hasMoreRef.current = initialHasNextPage;
+  }, [initialRows, totalRowsProp, initialHasNextPage]);
 
   React.useEffect(() => {
     setDraft(initialFilters);
@@ -187,43 +201,80 @@ export function EventLogExplorer({
       params.delete('page');
       router.replace(`/admin?${params.toString()}`);
     },
-    [router, searchParams],
+    [router, searchParams]
   );
 
-  const goToPage = React.useCallback(
-    (next: number) => {
+  const loadMore = React.useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const pageToFetch = nextPageRef.current;
       const params = new URLSearchParams(searchParams.toString());
-      if (next <= 1) params.delete('page');
-      else params.set('page', String(next));
-      router.replace(`/admin?${params.toString()}`);
-    },
-    [router, searchParams],
-  );
+      params.delete('page');
+      params.set('limit', String(pageSize));
+      params.set('page', String(pageToFetch));
+      const res = await fetch(`/api/admin/events?${params.toString()}`);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          rows: EventLog[];
+          total: number;
+          hasNextPage: boolean;
+        };
+        nextPageRef.current = pageToFetch + 1;
+        setHasMore(data.hasNextPage);
+        hasMoreRef.current = data.hasNextPage;
+        setRows(prev => mergeDedupeSortEvents(prev, hydrateRows(data.rows)));
+        setListMeta({ totalRows: data.total });
+      }
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [searchParams, pageSize]);
 
   const refresh = React.useCallback(async () => {
     setPending(true);
     try {
       const params = new URLSearchParams(searchParams.toString());
+      params.delete('page');
       params.set('limit', String(pageSize));
+      params.set('page', '1');
       const res = await fetch(`/api/admin/events?${params.toString()}`);
       if (res.ok) {
         const data = (await res.json()) as {
           rows: EventLog[];
           summary?: EventCountSummary;
           total: number;
-          totalPages: number;
+          hasNextPage: boolean;
         };
         setRows(hydrateRows(data.rows));
-        setListMeta({
-          totalRows: data.total,
-          totalPages: data.totalPages,
-        });
+        setListMeta({ totalRows: data.total });
+        setHasMore(data.hasNextPage);
+        hasMoreRef.current = data.hasNextPage;
+        nextPageRef.current = 2;
         if (data.summary) setSummary(data.summary);
       }
     } finally {
       setPending(false);
     }
   }, [searchParams, pageSize]);
+
+  React.useEffect(() => {
+    const root = scrollRootRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const hit = entries.some(e => e.isIntersecting);
+        if (hit) void loadMore();
+      },
+      { root, rootMargin: '140px', threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore, rows.length]);
 
   React.useEffect(() => {
     if (!autorefresh) return;
@@ -235,7 +286,7 @@ export function EventLogExplorer({
 
   const filtersDirty = React.useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(initialFilters),
-    [draft, initialFilters],
+    [draft, initialFilters]
   );
 
   /** With filters, API merges peer lines per meeting — always show stage shells, never a lone flat row. */
@@ -273,7 +324,7 @@ export function EventLogExplorer({
             />
             Auto-refresh (15s)
           </label>
-          <Button variant="secondary" size="sm" onClick={refresh} disabled={pending}>
+          <Button variant="secondary" size="sm" onClick={refresh} disabled={pending || loadingMore}>
             {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
             Refresh
           </Button>
@@ -287,23 +338,23 @@ export function EventLogExplorer({
 
       <div className="shrink-0">
         <FilterPanel
-        draft={draft}
-        setDraft={setDraft}
-        clients={clients}
-        onApply={() => applyFilters(draft)}
-        onReset={() =>
-          applyFilters({
-            eventTypes: [],
-            eventGroups: [],
-            statusValues: [],
-            clientId: '',
-            search: '',
-            since: '',
-            until: '',
-          })
-        }
-        dirty={filtersDirty}
-      />
+          draft={draft}
+          setDraft={setDraft}
+          clients={clients}
+          onApply={() => applyFilters(draft)}
+          onReset={() =>
+            applyFilters({
+              eventTypes: [],
+              eventGroups: [],
+              statusValues: [],
+              clientId: '',
+              search: '',
+              since: '',
+              until: '',
+            })
+          }
+          dirty={filtersDirty}
+        />
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border border-border surface-glass">
@@ -314,7 +365,7 @@ export function EventLogExplorer({
           <div>Source</div>
           <div className="text-right">Status</div>
         </div>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-bg/20">
+        <div ref={scrollRootRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-bg/20">
           {rows.length === 0 ? (
             <div className="p-10">
               <EmptyState
@@ -326,10 +377,8 @@ export function EventLogExplorer({
             <ol className="flex flex-col gap-2 p-2">
               {groups.map(group => {
                 const shellForGroupFilter =
-                  useGroupFilterShell &&
-                  clusterOnlyContainsTypesFromSelectedGroups(group, initialFilters.eventGroups);
-                const showGroupedRow =
-                  forceGroupedShells || shellForGroupFilter || group.others.length > 0;
+                  useGroupFilterShell && clusterOnlyContainsTypesFromSelectedGroups(group, initialFilters.eventGroups);
+                const showGroupedRow = forceGroupedShells || shellForGroupFilter || group.others.length > 0;
                 return showGroupedRow ? (
                   <GroupedEventRow key={`${group.stageId}-${group.primary.id}`} group={group} />
                 ) : (
@@ -340,66 +389,46 @@ export function EventLogExplorer({
                   </li>
                 );
               })}
+              <div
+                ref={sentinelRef}
+                className="flex min-h-12 shrink-0 flex-col items-center justify-center gap-1 py-3 text-[11px] text-text-muted"
+                aria-hidden>
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
+                    <span>Loading older events…</span>
+                  </>
+                ) : hasMore ? (
+                  <span className="text-text-muted/80">Scroll for older events</span>
+                ) : rows.length > 0 ? (
+                  <span className="text-text-muted/70">End of log</span>
+                ) : null}
+              </div>
             </ol>
           )}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
-          <div className="text-[12px] text-text-muted">
-            {grouping ? (
-              <>
-                <span className="stat-num font-medium text-text">{groups.length.toLocaleString()}</span>
-                {' '}
-                group{groups.length === 1 ? '' : 's'} on this page
-              </>
-            ) : (
-              <>
-                <span className="stat-num font-medium text-text">{listMeta.totalRows.toLocaleString()}</span>
-                {' '}
-                matching row{listMeta.totalRows === 1 ? '' : 's'}
-              </>
-            )}
-            {listMeta.totalPages > 1 ? (
-              <span className="text-text-muted/85">
-                {' '}
-                · Page {page} of {listMeta.totalPages}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page <= 1 || pending}
-              onClick={() => goToPage(1)}
-              title="First page">
-              <ChevronsLeft className="h-3.5 w-3.5" />
-              First
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page <= 1 || pending}
-              onClick={() => goToPage(page - 1)}>
-              <ChevronLeft className="h-3.5 w-3.5" />
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page >= listMeta.totalPages || pending}
-              onClick={() => goToPage(page + 1)}>
-              Next
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page >= listMeta.totalPages || pending}
-              onClick={() => goToPage(listMeta.totalPages)}
-              title="Last page">
-              Last
-              <ChevronsRight className="h-3.5 w-3.5" />
-            </Button>
+        <div className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-[12px] text-text-muted">
+              {grouping ? (
+                <>
+                  <span className="text-text-muted/90"> · {summary.total.toLocaleString()} total matching filters</span>
+                  <span className="text-text-muted/85">
+                    {' '}
+                    · <span className="stat-num">{rows.length.toLocaleString()}</span> log rows in memory
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="stat-num font-medium text-text">{rows.length.toLocaleString()}</span> row
+                  {rows.length === 1 ? '' : 's'} loaded
+                  <span className="text-text-muted/90">
+                    {' '}
+                    · {listMeta.totalRows.toLocaleString()} matching in database
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -413,6 +442,17 @@ function hydrateRows(rows: EventLog[]): EventLog[] {
     ...r,
     createdAt: typeof r.createdAt === 'string' ? new Date(r.createdAt) : r.createdAt,
   }));
+}
+
+function mergeDedupeSortEvents(existing: EventLog[], incoming: EventLog[]): EventLog[] {
+  const map = new Map<string, EventLog>();
+  for (const r of existing) map.set(r.id, r);
+  for (const r of incoming) map.set(r.id, r);
+  return [...map.values()].sort((a, b) => {
+    const dt = b.createdAt.getTime() - a.createdAt.getTime();
+    if (dt !== 0) return dt;
+    return b.id.localeCompare(a.id);
+  });
 }
 
 function SummaryStrip({ summary }: { summary: EventCountSummary }) {
@@ -603,14 +643,10 @@ function ChipGroup<T extends string>({
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       {label ? (
-        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">
-          {label}
-        </span>
+        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted">{label}</span>
       ) : null}
       <div className={rowClass}>
-        {options.length === 0 && (
-          <span className="text-[12px] text-text-muted">— no values yet —</span>
-        )}
+        {options.length === 0 && <span className="text-[12px] text-text-muted">— no values yet —</span>}
         {options.map(o => {
           const active = selected.includes(o.value);
           return (
@@ -641,7 +677,7 @@ type StagedEventGroup = StagedPipelineGroup;
 /** True when every event in the cluster is one of the types implied by the selected pipeline group chips. */
 function clusterOnlyContainsTypesFromSelectedGroups(
   cluster: StagedEventGroup,
-  selectedGroupIds: EventGroupId[],
+  selectedGroupIds: EventGroupId[]
 ): boolean {
   if (!selectedGroupIds.length) return false;
   const allowed = typesInSelectedEventGroups(selectedGroupIds);
@@ -683,8 +719,7 @@ function describeStageSummary(stageId: PipelineStageId, events: EventLog[]): str
       const skip = events.find(e => e.eventType === 'appscript_processing_skipped');
       const base = skip?.message?.trim() || 'Apps Script did not queue processing';
       const hasWebhooks = events.some(
-        e =>
-          e.eventType === 'zoom_webhook_received' || e.eventType === 'cloudflare_webhook_received',
+        e => e.eventType === 'zoom_webhook_received' || e.eventType === 'cloudflare_webhook_received'
       );
       const hasStarted = events.some(e => e.eventType === 'appscript_processing_started');
       let line = hasWebhooks ? `${base} · includes Zoom / Cloudflare webhook hops` : base;
@@ -752,12 +787,9 @@ function describeStageSummary(stageId: PipelineStageId, events: EventLog[]): str
 }
 
 function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHeaderModel {
-  const summary =
-    stageId === 'related' ? describeMergedMeetingSummary(events) : describeStageSummary(stageId, events);
+  const summary = stageId === 'related' ? describeMergedMeetingSummary(events) : describeStageSummary(stageId, events);
   const statusWord =
-    stageId === 'related'
-      ? pipelineStatusWordForMergedCluster(events)
-      : pipelineStatusWordForStage(stageId, events);
+    stageId === 'related' ? pipelineStatusWordForMergedCluster(events) : pipelineStatusWordForStage(stageId, events);
   const statusBadge = <PipelineStatusBadge word={statusWord} />;
 
   if (stageId === 'related') {
@@ -770,9 +802,7 @@ function buildStageHeader(stageId: PipelineStageId, events: EventLog[]): StageHe
       ) : (
         <Layers className="h-3.5 w-3.5" />
       ),
-      iconWrap: hasKnownPipeline
-        ? 'bg-emerald-500/15 text-emerald-300'
-        : 'bg-surface-2 text-text-dim',
+      iconWrap: hasKnownPipeline ? 'bg-emerald-500/15 text-emerald-300' : 'bg-surface-2 text-text-dim',
       statusWord,
       statusBadge,
     };
@@ -834,14 +864,15 @@ function GroupedEventRow({ group }: { group: StagedEventGroup }) {
   const all = [group.primary, ...group.others];
   const total = all.length;
 
-  const sources = Array.from(
-    new Set(all.map(e => resolveEventDisplaySource(e)).filter(Boolean)),
-  ).sort((a, b) => a.localeCompare(b));
+  const sources = Array.from(new Set(all.map(e => resolveEventDisplaySource(e)).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
   const header = buildStageHeader(group.stageId, all);
-  const railClass = PIPELINE_STATUS_RAIL[header.statusWord];
+  const statusWord = group.meetingRollupStatus ?? header.statusWord;
+  const statusBadge = <PipelineStatusBadge word={statusWord} />;
+  const railClass = PIPELINE_STATUS_RAIL[statusWord];
 
-  const meetingTopic =
-    all.find(e => e.meetingTopic)?.meetingTopic ?? all.find(e => e.callId)?.callId ?? null;
+  const meetingTopic = all.find(e => e.meetingTopic)?.meetingTopic ?? all.find(e => e.callId)?.callId ?? null;
   const clientName = all.find(e => e.clientName)?.clientName ?? null;
   const callDate = all.find(e => e.callDate)?.callDate ?? null;
 
@@ -853,7 +884,9 @@ function GroupedEventRow({ group }: { group: StagedEventGroup }) {
   return (
     <li
       className={`overflow-hidden rounded-lg border bg-surface/40 transition ${
-        expanded ? 'border-accent/40 shadow-[0_0_0_1px_rgba(99,102,241,0.18)]' : 'border-border/70 hover:border-border-strong'
+        expanded
+          ? 'border-accent/40 shadow-[0_0_0_1px_rgba(99,102,241,0.18)]'
+          : 'border-border/70 hover:border-border-strong'
       }`}>
       <button
         type="button"
@@ -873,9 +906,7 @@ function GroupedEventRow({ group }: { group: StagedEventGroup }) {
         </div>
 
         <div className="flex min-w-0 items-start gap-2.5">
-          <div className={`mt-0.5 shrink-0 rounded-md p-1 ${header.iconWrap}`}>
-            {header.icon}
-          </div>
+          <div className={`mt-0.5 shrink-0 rounded-md p-1 ${header.iconWrap}`}>{header.icon}</div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-[13px] font-semibold text-text">{header.title}</span>
@@ -902,12 +933,8 @@ function GroupedEventRow({ group }: { group: StagedEventGroup }) {
         </div>
 
         <div className="min-w-0">
-          {clientName && (
-            <div className="truncate text-[12.5px] text-text">{clientName}</div>
-          )}
-          {meetingTopic && (
-            <div className="truncate text-[11.5px] text-text-muted">{meetingTopic}</div>
-          )}
+          {clientName && <div className="truncate text-[12.5px] text-text">{clientName}</div>}
+          {meetingTopic && <div className="truncate text-[11.5px] text-text-muted">{meetingTopic}</div>}
           {callDate && (
             <div className="text-[10.5px] text-text-muted">
               {new Date(callDate).toLocaleDateString(undefined, {
@@ -932,16 +959,13 @@ function GroupedEventRow({ group }: { group: StagedEventGroup }) {
           ))}
         </div>
 
-        <div className="text-right">{header.statusBadge}</div>
+        <div className="text-right">{statusBadge}</div>
       </button>
 
       {expanded && (
         <div className="relative border-t border-border/70 bg-bg/30">
           {/* Vertical accent rail — overlay so it never shifts the row grid */}
-          <span
-            aria-hidden
-            className={`pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] ${railClass}`}
-          />
+          <span aria-hidden className={`pointer-events-none absolute bottom-0 left-0 top-0 w-[3px] ${railClass}`} />
           {/* Children render edge-to-edge so their internal grid columns
               line up exactly with the parent header's grid columns. */}
           <ol className="flex flex-col divide-y divide-border/40">

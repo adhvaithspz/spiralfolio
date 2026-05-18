@@ -47,8 +47,6 @@ export default async function AdminEventsPage({
   const since = parseAdminSinceDay(get('since'));
   const until = parseAdminUntilDayInclusive(get('until'));
 
-  const rawPage = Math.max(1, Number.parseInt(get('page') ?? '1', 10) || 1);
-
   const filtersBase = {
     eventTypes: mergedEventTypes.length ? mergedEventTypes : undefined,
     eventGroups: eventGroups.length ? eventGroups : undefined,
@@ -60,7 +58,7 @@ export default async function AdminEventsPage({
     since,
     until,
     limit: ADMIN_EVENT_LOG_PAGE_SIZE,
-    offset: (rawPage - 1) * ADMIN_EVENT_LOG_PAGE_SIZE,
+    offset: 0,
   };
 
   const [listFirst, summary, allClients] = await Promise.all([
@@ -69,29 +67,15 @@ export default async function AdminEventsPage({
     listClients(),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(listFirst.total / ADMIN_EVENT_LOG_PAGE_SIZE));
-
-  if (rawPage > totalPages) {
-    const sp = new URLSearchParams();
-    for (const key of ['event_types', 'event_groups', 'severities', 'client_id', 'q', 'since', 'until'] as const) {
-      const v = get(key);
-      if (v) sp.set(key, v);
-    }
-    if (totalPages > 1) sp.set('page', String(totalPages));
-    redirect(`/admin?${sp.toString()}`);
-  }
-
-  const { rows, total } = listFirst;
-  const page = rawPage;
+  const { rows, total, hasNextPage } = listFirst;
 
   return (
     <AdminEventLogShell>
       <EventLogExplorer
         initialRows={rows}
-        page={page}
+        initialHasNextPage={hasNextPage}
         pageSize={ADMIN_EVENT_LOG_PAGE_SIZE}
         totalRows={total}
-        totalPages={totalPages}
         summary={summary}
         clients={allClients.map(c => ({ id: c.id, name: c.name }))}
         initialFilters={{

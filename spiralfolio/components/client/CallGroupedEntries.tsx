@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { formatDate } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { cn, formatSessionDate, normalizeCallDateKey } from '@/lib/utils';
 
 export type GroupableCallEntry = {
   id?: string;
@@ -19,7 +18,7 @@ function sortGroupsDescending(dates: string[]): string[] {
 function groupEntries<T extends GroupableCallEntry>(items: T[]): Map<string, T[]> {
   const map = new Map<string, T[]>();
   for (const item of items) {
-    const key = item.call_date?.trim() || '__undated';
+    const key = normalizeCallDateKey(item.call_date) ?? '__undated';
     const bucket = map.get(key);
     if (bucket) bucket.push(item);
     else map.set(key, [item]);
@@ -29,7 +28,7 @@ function groupEntries<T extends GroupableCallEntry>(items: T[]): Map<string, T[]
 
 function dateLabel(dateKey: string): string {
   if (dateKey === '__undated') return 'Earlier / undated';
-  return formatDate(dateKey.length >= 10 ? `${dateKey.slice(0, 10)}T12:00:00` : dateKey);
+  return formatSessionDate(dateKey);
 }
 
 export function CallGroupedEntries({

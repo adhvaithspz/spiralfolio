@@ -20,6 +20,19 @@ export function parseYYYYMMDDLocal(s: string): Date {
   return new Date(y, mo - 1, day);
 }
 
+/**
+ * Canonical `YYYY-MM-DD` for grouping brain entries by call session day.
+ * Plain calendar strings pass through; full ISO timestamps map to the user's **local** date.
+ */
+export function normalizeCallDateKey(raw: string | null | undefined): string | null {
+  const s = raw?.trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const t = new Date(s).getTime();
+  if (Number.isNaN(t)) return null;
+  return toLocalYYYYMMDD(new Date(t));
+}
+
 const MS_PER_DAY = 86_400_000;
 
 function localMidnightFrom(ref: Date): Date {

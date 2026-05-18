@@ -219,20 +219,6 @@ function pushMergedEventTypeCondition(
   }
 }
 
-/** True when operators narrowed the log — expand seeds to full meeting/call/topic clusters for grouping. */
-export function shouldExpandClustersForFilters(filters: ListEventsFilters): boolean {
-  return !!(
-    (filters.eventTypes?.length ?? 0) > 0 ||
-    (filters.eventGroups?.length ?? 0) > 0 ||
-    (filters.severities?.length ?? 0) > 0 ||
-    filters.pipelineSkipped ||
-    (filters.clientId && filters.clientId.length > 0) ||
-    (filters.search && filters.search.trim().length > 0) ||
-    filters.since !== undefined ||
-    filters.until !== undefined
-  );
-}
-
 function collectClusterKeyParts(rows: EventLog[]): {
   meetingIds: string[];
   callIds: string[];
@@ -433,7 +419,8 @@ export async function summarizePipelineParents(filters: ListEventsFilters = {}):
     .orderBy(desc(eventLogs.createdAt), desc(eventLogs.id));
 
   let rows = seedRows;
-  if (shouldExpandClustersForFilters(filters) && seedRows.length > 0) {
+  /** Match {@link listEvents}: merge correlated rows so clustering sees the same graph as grouped rows on screen. */
+  if (seedRows.length > 0) {
     const peers = await fetchClusterPeersForRows(seedRows, filters);
     rows = mergeDedupeSortEvents(seedRows, peers);
   }

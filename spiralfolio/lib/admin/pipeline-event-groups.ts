@@ -1,7 +1,8 @@
 /**
  * Pure clustering + stage split for the admin pipeline log. Mirrors the client
  * explorer when **Group related** is on — used for summaries and must stay in
- * sync with `splitClusterIntoStages` in the UI module.
+ * sync with `EventLogExplorer` (including {@link collapseStagedGroupsByMeetingKey}
+ * so list rows match summary totals).
  */
 
 import type { EventLog } from '@/lib/db/schema';
@@ -19,6 +20,11 @@ export type PipelineClusterGroup = {
 
 export type StagedPipelineGroup = PipelineClusterGroup & {
   stageId: PipelineStageId;
+  /**
+   * When several time-split runs share the same meeting key, the summary strip uses
+   * the worst status across those runs — mirror that here so the row badge matches.
+   */
+  meetingRollupStatus?: PipelineStatusWord;
 };
 
 const GROUP_WINDOW_MS = 30 * 60 * 1000;
@@ -105,6 +111,36 @@ export function meetingKey(row: EventLog): string | null {
   const topic = normalizeTopic(row.meetingTopic);
   if (topic.length >= 3) return `topic:${topic}`;
   return null;
+}
+
+/**
+ * Bucket key for admin summaries and grouped rows — **not** only {@link meetingKey}
+ * on the newest primary. SpiralFolio rows often omit Zoom `meetingId` while older
+ * webhook rows in the same cluster still have it; using only the primary splits one
+ * meeting into multiple buckets and breaks totals vs the status strip.
+ *
+ * Prefers `ctd:` (client + calendar day + topic) when present so Apps Script /
+ * SpiralFolio legs tie to Zoom legs without a shared numeric id.
+ */
+export function meetingBucketKeyForStagedGroup(g: StagedPipelineGroup): string {
+  const rows = [g.primary, ...g.others];
+  for (const row of rows) {
+    const mid = row.meetingId?.trim();
+    if (mid) return `meeting:${mid}`;
+  }
+  for (const row of rows) {
+    const cid = row.callId?.trim();
+    if (cid) return `call:${cid}`;
+  }
+  for (const row of rows) {
+    for (const tok of collectCorrelationTokens(row)) {
+      if (tok.startsWith('ctd:')) return tok;
+    }
+  }
+  const topicRow = rows.find(r => normalizeTopic(r.meetingTopic).length >= 3);
+  const topic = normalizeTopic(topicRow?.meetingTopic ?? g.primary.meetingTopic);
+  if (topic.length >= 3) return `topic:${topic}`;
+  return `row:${g.primary.id}`;
 }
 
 export function toMs(d: Date | string): number {
@@ -390,6 +426,70 @@ export function collapseStagesPerMeetingCluster(stages: StagedPipelineGroup[]): 
   return [{ primary, others, stageId: 'related' }];
 }
 
+/** Worst outcome across staged rows for the same meeting (matches admin summary bucketing). */
+export function worstPipelineStatusAcrossStaged(stages: StagedPipelineGroup[]): PipelineStatusWord {
+  let worst: PipelineStatusWord = 'Success';
+  let worstRank = PIPELINE_STATUS_RANK[worst];
+  for (const stage of stages) {
+    const all = [stage.primary, ...stage.others];
+    const w =
+      stage.stageId === 'related'
+        ? pipelineStatusWordForMergedCluster(all)
+        : pipelineStatusWordForStage(stage.stageId, all);
+    const r = PIPELINE_STATUS_RANK[w];
+    if (r > worstRank) {
+      worstRank = r;
+      worst = w;
+    }
+  }
+  return worst;
+}
+
+/**
+ * Merge staged rows that belong to the **same meeting handle** (Zoom meeting id,
+ * SpiralFolio call id, or normalized topic) into one expandable group.
+ *
+ * {@link groupRelatedEvents} can emit multiple runs per meeting when events fall
+ * outside the 30‑minute merge window; the admin summary still counts those as one
+ * meeting via {@link aggregatePipelineParents}. Collapsing here keeps the event
+ * list aligned with that total so operators do not double-count.
+ */
+export function collapseStagedGroupsByMeetingKey(groups: StagedPipelineGroup[]): StagedPipelineGroup[] {
+  const buckets = new Map<string, StagedPipelineGroup[]>();
+  for (const g of groups) {
+    const k = meetingBucketKeyForStagedGroup(g);
+    const arr = buckets.get(k) ?? [];
+    arr.push(g);
+    buckets.set(k, arr);
+  }
+
+  const out: StagedPipelineGroup[] = [];
+  for (const bucket of buckets.values()) {
+    if (bucket.length === 1) {
+      out.push(bucket[0]!);
+      continue;
+    }
+    const byId = new Map<string, EventLog>();
+    for (const g of bucket) {
+      byId.set(g.primary.id, g.primary);
+      for (const o of g.others) byId.set(o.id, o);
+    }
+    const merged = [...byId.values()].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+    const [primary, ...others] = merged;
+    if (primary) {
+      out.push({
+        primary,
+        others,
+        stageId: 'related',
+        meetingRollupStatus: worstPipelineStatusAcrossStaged(bucket),
+      });
+    }
+  }
+
+  out.sort((a, b) => toMs(b.primary.createdAt) - toMs(a.primary.createdAt));
+  return out;
+}
+
 export function mergeStageGroupsForGroupFilter(
   groups: StagedPipelineGroup[],
   selectedGroupIds: EventGroupId[],
@@ -402,8 +502,8 @@ export function mergeStageGroupsForGroupFilter(
 
   for (const g of groups) {
     const all = [g.primary, ...g.others];
-    const keyBase = meetingKey(g.primary);
-    const mergeKey = keyBase ? `${keyBase}::${g.stageId}` : null;
+    const bucketKey = meetingBucketKeyForStagedGroup(g);
+    const mergeKey = bucketKey.startsWith('row:') ? null : `${bucketKey}::${g.stageId}`;
     const allAllowed = all.every(e => allowed.has(e.eventType));
     if (mergeKey && allAllowed) {
       let entry = mergeableByKey.get(mergeKey);
@@ -449,7 +549,7 @@ export function aggregatePipelineParents(
 
   const byMeeting = new Map<string, StagedPipelineGroup[]>();
   for (const g of staged) {
-    const k = meetingKey(g.primary) ?? `row:${g.primary.id}`;
+    const k = meetingBucketKeyForStagedGroup(g);
     const arr = byMeeting.get(k) ?? [];
     arr.push(g);
     byMeeting.set(k, arr);
@@ -462,21 +562,7 @@ export function aggregatePipelineParents(
   };
 
   for (const stages of byMeeting.values()) {
-    let worst: PipelineStatusWord = 'Success';
-    let worstRank = PIPELINE_STATUS_RANK[worst];
-    for (const stage of stages) {
-      const all = [stage.primary, ...stage.others];
-      const w =
-        stage.stageId === 'related'
-          ? pipelineStatusWordForMergedCluster(all)
-          : pipelineStatusWordForStage(stage.stageId, all);
-      const r = PIPELINE_STATUS_RANK[w];
-      if (r > worstRank) {
-        worstRank = r;
-        worst = w;
-      }
-    }
-    byStatus[worst]++;
+    byStatus[worstPipelineStatusAcrossStaged(stages)]++;
   }
 
   return { totalParents: byMeeting.size, byStatus };
