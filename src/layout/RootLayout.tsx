@@ -5,10 +5,7 @@ import { UserMenu } from '@/components/shared/UserMenu';
 import { BRAND } from '@/lib/brand';
 import { useSession } from '@/contexts/SessionContext';
 
-const PUBLIC_PATHS = new Set([
-  '/login',
-  '/admin/login',
-]);
+const PUBLIC_PATHS = new Set(['/login']);
 
 export function RootLayout() {
   const { ready, user } = useSession();
@@ -61,11 +58,13 @@ export function RootLayout() {
                 className="rounded-md px-3 py-1.5 text-text-dim transition hover:bg-surface hover:text-text">
                 Dashboard
               </Link>
-              <Link
-                to="/admin"
-                className="rounded-md px-3 py-1.5 text-text-dim transition hover:bg-surface hover:text-text">
-                Admin
-              </Link>
+              {user.role === 'admin' && (
+                <Link
+                  to="/admin"
+                  className="rounded-md px-3 py-1.5 text-text-dim transition hover:bg-surface hover:text-text">
+                  Admin
+                </Link>
+              )}
               <div className="ml-1 border-l border-border pl-2">
                 <UserMenu email={user.email} name={user.name} picture={user.picture} />
               </div>

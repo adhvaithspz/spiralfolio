@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { SessionProvider } from '@/contexts/SessionContext';
 import { RootLayout } from '@/layout/RootLayout';
-import { AdminLoginPage } from '@/pages/AdminLoginPage';
 import { AdminPage } from '@/pages/AdminPage';
 import { CallsPage } from '@/pages/CallsPage';
 import { ClientPage } from '@/pages/ClientPage';
@@ -20,7 +19,6 @@ export default function App() {
           <Route path="/clients/:id" element={<ClientPage />} />
           <Route path="/clients/:id/calls" element={<CallsPage />} />
           <Route path="/clients/:id/documents" element={<DocumentsPage />} />
-          <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>

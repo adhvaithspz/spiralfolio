@@ -13,6 +13,7 @@ import {
 import type { EventLog } from '@/lib/types/schema';
 import type { EventCountSummary } from '@/lib/types/events';
 import { apiFetch } from '@/lib/api';
+import { useSession } from '@/contexts/SessionContext';
 
 function parseList<T extends string>(value: string | undefined, allowed?: readonly T[]): T[] {
   if (!value) return [];
@@ -26,6 +27,7 @@ const emptySummary = (): EventCountSummary => ({
 });
 
 export function AdminPage() {
+  const { ready, user } = useSession();
   const [searchParams] = useSearchParams();
 
   const get = (k: string): string | undefined => searchParams.get(k) ?? undefined;
@@ -60,37 +62,14 @@ export function AdminPage() {
     };
   }, [searchParams]);
 
-  const [adminUser, setAdminUser] = useState<string | null>(null);
-
   const [rows, setRows] = useState<EventLog[]>([]);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [totalRows, setTotalRows] = useState(0);
   const [summary, setSummary] = useState<EventCountSummary>(() => emptySummary());
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
 
-  const [sessionChecked, setSessionChecked] = useState(false);
-
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const sess = await apiFetch('/api/admin/session');
-      if (cancelled) return;
-      if (!sess.ok) {
-        setAdminUser(null);
-        setSessionChecked(true);
-        return;
-      }
-      const s = (await sess.json()) as { configured?: boolean; user?: { username: string } | null };
-      setAdminUser(s.user?.username ?? null);
-      setSessionChecked(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionChecked || !adminUser) return;
+    if (!ready || user?.role !== 'admin') return;
     let cancelled = false;
 
     const load = async () => {
@@ -137,18 +116,13 @@ export function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionChecked, adminUser, initialFilters, searchParams]);
+  }, [ready, user, initialFilters, searchParams]);
 
-  if (!sessionChecked) {
+  if (!ready) {
     return null;
   }
-  if (adminUser === null) {
-    return (
-      <Navigate
-        to={`/admin/login?from=/admin${searchParams.toString() ? `?${searchParams.toString()}` : ''}`}
-        replace
-      />
-    );
+  if (!user || user.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { apiFetch } from '@/lib/api';
 
-export type Viewer = { email: string; name: string; picture: string | null };
+export type UserRole = 'admin' | 'viewer';
+export type Viewer = { email: string; name: string; picture: string | null; role: UserRole };
 
 type Ctx = {
   ready: boolean;
@@ -33,13 +34,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     const data = (await res.json()) as {
       configured: boolean;
-      user: Viewer | null;
+      user: { email: string; name: string; picture: string | null; role?: UserRole } | null;
       gaps?: string[];
       allowedDomains?: string[];
     };
     setSsoConfigured(data.configured !== false);
     setSsoGaps(Array.isArray(data.gaps) ? data.gaps : []);
-    setUser(data.user);
+    setUser(data.user ? { ...data.user, role: data.user.role ?? 'viewer' } : null);
     setAllowedDomains(Array.isArray(data.allowedDomains) ? data.allowedDomains : []);
   }, []);
 

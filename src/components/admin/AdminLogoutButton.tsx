@@ -1,26 +1,28 @@
-
 import { useNavigate } from 'react-router-dom';
 import * as React from 'react';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/shared/Button';
 import { apiFetch } from '@/lib/api';
+import { useSession } from '@/contexts/SessionContext';
 
 export function AdminLogoutButton() {
   const navigate = useNavigate();
+  const { reload } = useSession();
   const [pending, startTransition] = React.useTransition();
 
   const onClick = React.useCallback(() => {
     startTransition(() => {
       void (async () => {
         try {
-          await apiFetch('/api/admin/auth/logout', { method: 'POST' });
+          await apiFetch('/api/auth/logout', { method: 'POST' });
+          await reload();
         } catch {
-          // ignore — the user can also nuke the cookie manually
+          // ignore
         }
-        navigate('/admin/login', { replace: true });
+        navigate('/login', { replace: true });
       })();
     });
-  }, [navigate]);
+  }, [navigate, reload]);
 
   return (
     <Button variant="ghost" size="sm" onClick={onClick} disabled={pending}>
